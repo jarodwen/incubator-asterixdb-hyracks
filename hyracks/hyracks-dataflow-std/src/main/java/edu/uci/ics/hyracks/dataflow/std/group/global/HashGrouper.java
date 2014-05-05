@@ -116,9 +116,9 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
 
         int[] storedKeys = new int[keyFields.length];
 
-        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, storedKeys);
+        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, storedKeys, null);
         this.aggState = aggregator.createAggregateStates();
-        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeys, storedKeys);
+        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeys, storedKeys, null);
     }
 
     /*

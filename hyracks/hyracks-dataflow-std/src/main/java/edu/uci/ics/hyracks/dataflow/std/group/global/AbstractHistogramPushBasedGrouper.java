@@ -17,6 +17,7 @@ package edu.uci.ics.hyracks.dataflow.std.group.global;
 import java.util.LinkedList;
 import java.util.List;
 
+import edu.uci.ics.hyracks.api.comm.IFrameTupleAccessor;
 import edu.uci.ics.hyracks.api.comm.IFrameWriter;
 import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
 import edu.uci.ics.hyracks.api.dataflow.value.RecordDescriptor;
@@ -24,11 +25,17 @@ import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileReader;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileWriter;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
-import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor.GroupOutputState;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.HistogramUtils;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.IFrameWriterRunGenerator;
+import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection;
 
-public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriter {
+public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriterRunGenerator {
 
     public static final int INT_SIZE = 4;
+
+    private int[] histogram;
+    private boolean enableHistogram = false;
 
     protected final IHyracksTaskContext ctx;
 
@@ -48,6 +55,8 @@ public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriter 
 
     protected final boolean isGenerateRuns;
 
+    protected final OperatorDebugCounterCollection debugCounters;
+
     public AbstractHistogramPushBasedGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields,
             int framesLimit, IAggregatorDescriptorFactory aggregatorFactory,
             IAggregatorDescriptorFactory mergerFactory, RecordDescriptor inRecDesc, RecordDescriptor outRecDesc,
@@ -62,14 +71,48 @@ public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriter 
         this.inRecDesc = inRecDesc;
         this.outRecDesc = outRecDesc;
         this.outputWriter = outputWriter;
+        this.histogram = new int[HistogramUtils.HISTOGRAM_SLOTS];
+        this.enableHistogram = enableHistorgram;
+        this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
+                + (isGenerateRuns ? ".runsEnabled" : "") + "." + String.valueOf(Thread.currentThread().getId()));
         this.isGenerateRuns = isGenerateRuns;
 
         this.runReaders = new LinkedList<RunFileReader>();
     }
 
-    abstract protected void reset() throws HyracksDataException;
+    protected void insertIntoHistogram(IFrameTupleAccessor accessor, int tupleIndex, int[] keyFields)
+            throws HyracksDataException {
+        if (enableHistogram) {
+            this.histogram[HistogramUtils.getHistogramBucketID(accessor, tupleIndex, keyFields)]++;
+        }
+    }
 
-    abstract protected void flush(IFrameWriter writer, GroupOutputState outputStateType) throws HyracksDataException;
+    protected void insertIntoHistogram(int hashValue) {
+        if (enableHistogram) {
+            this.histogram[hashValue % this.histogram.length]++;
+        }
+    }
+
+    public int[] getDataDistHistogram() throws HyracksDataException {
+        return this.histogram;
+    }
+
+    protected void resetHistogram() {
+        if (enableHistogram) {
+            for (int i = 0; i < histogram.length; i++) {
+                histogram[i] = 0;
+            }
+        }
+    }
+
+    public void reset() throws HyracksDataException {
+        if (enableHistogram) {
+            resetHistogram();
+        }
+        this.dumpAndCleanDebugCounters();
+    }
+
+    abstract protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException;
 
     abstract protected void dumpAndCleanDebugCounters();
 
@@ -87,12 +130,12 @@ public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriter 
             IFrameWriter dumpWriter = new RunFileWriter(ctx.createManagedWorkspaceFile(SortGrouper.class
                     .getSimpleName()), ctx.getIOManager());
             dumpWriter.open();
-            flush(dumpWriter, GroupOutputState.GROUP_STATE);
+            flush(dumpWriter, GrouperFlushOption.FLUSH_FOR_GROUP_STATE);
             RunFileReader runReader = ((RunFileWriter) dumpWriter).createReader();
             this.runReaders.add(runReader);
             dumpWriter.close();
         } else {
-            flush(outputWriter, GroupOutputState.RESULT_STATE);
+            flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE);
         }
     }
 

@@ -26,7 +26,6 @@ import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFamily;
 import edu.uci.ics.hyracks.api.dataflow.value.INormalizedKeyComputerFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.RecordDescriptor;
 import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
-import edu.uci.ics.hyracks.dataflow.common.comm.util.FrameUtils;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileReader;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor;
@@ -47,7 +46,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
     private final IBinaryComparatorFactory[] comparatorFactories;
     private final IBinaryHashFunctionFamily[] hashFunctionFamilies;
     private final INormalizedKeyComputerFactory firstKeyNormalizerFactory;
-    private final IAggregatorDescriptorFactory aggregatorFactory, partialMergerFactory, finalMergerFactory;
+    private final IAggregatorDescriptorFactory aggregatorFactory,
+            partialMergerFactory, finalMergerFactory;
     private final RecordDescriptor inRecordDesc, outRecordDesc;
 
     private final long inputRecordCount, outputGroupCount;
@@ -65,19 +65,24 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
     private int maxRecursionLevel;
 
-    private final boolean isInputGloballyHashPartitioned;
-
     private final OperatorDebugCounterCollection debugCounters;
 
-    private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
+    private long profileCPU, profileIOInNetwork, profileIOInDisk,
+            profileIOOutDisk, profileIOOutNetwork;
 
-    public RecursiveHybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            int tableSize, long inputRecordCount, long outputGroupCount, int groupStateSizeInBytes, double fudgeFactor,
-            INormalizedKeyComputerFactory firstKeyNormalizerFactory, IBinaryComparatorFactory[] comparatorFactories,
-            IBinaryHashFunctionFamily[] hashFunctionFamilies, IAggregatorDescriptorFactory aggregatorFactory,
-            IAggregatorDescriptorFactory partialMergerFactory, IAggregatorDescriptorFactory finalMergerFactory,
-            RecordDescriptor inRecordDescriptor, RecordDescriptor outRecordDescriptor, int hashLevelSeed,
-            IFrameWriter outputWriter, boolean isInputGloballyHashPartitioned) throws HyracksDataException {
+    public RecursiveHybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields,
+            int[] decorFields, int framesLimit, int tableSize,
+            long inputRecordCount, long outputGroupCount,
+            int groupStateSizeInBytes, double fudgeFactor,
+            INormalizedKeyComputerFactory firstKeyNormalizerFactory,
+            IBinaryComparatorFactory[] comparatorFactories,
+            IBinaryHashFunctionFamily[] hashFunctionFamilies,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory partialMergerFactory,
+            IAggregatorDescriptorFactory finalMergerFactory,
+            RecordDescriptor inRecordDescriptor,
+            RecordDescriptor outRecordDescriptor, int hashLevelSeed,
+            IFrameWriter outputWriter) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -101,10 +106,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
 
-        this.isInputGloballyHashPartitioned = isInputGloballyHashPartitioned;
-
-        this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
-                + "." + String.valueOf(Thread.currentThread().getId()));
+        this.debugCounters = new OperatorDebugCounterCollection(
+                "costmodel.operator." + this.getClass().getSimpleName() + "."
+                        + String.valueOf(Thread.currentThread().getId()));
     }
 
     @Override
@@ -112,41 +116,53 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
         IBinaryHashFunctionFactory[] hashFunctionFactories = new IBinaryHashFunctionFactory[this.hashFunctionFamilies.length];
         for (int i = 0; i < hashFunctionFactories.length; i++) {
-            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter.getFunctionFactoryFromFunctionFamily(
-                    this.hashFunctionFamilies[i], hashLevelSeed + hashLevelSeedVariable);
+            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter
+                    .getFunctionFactoryFromFunctionFamily(
+                            this.hashFunctionFamilies[i], hashLevelSeed
+                                    + hashLevelSeedVariable);
         }
         hashLevelSeedVariable++;
 
-        gracePartitions = computeGracePartitions(framesLimit, frameSize, outputGroupCount, groupStateSizeInBytes,
-                fudgeFactor);
-        hybridHashPartitions = computeHybridHashPartitions(framesLimit, frameSize, outputGroupCount,
-                groupStateSizeInBytes, gracePartitions, fudgeFactor);
-        maxRecursionLevel = getMaxLevelsIfUsingSortGrouper(framesLimit, inputRecordCount, groupStateSizeInBytes);
+        gracePartitions = computeGracePartitions(framesLimit, frameSize,
+                outputGroupCount, groupStateSizeInBytes, fudgeFactor);
+        hybridHashPartitions = computeHybridHashPartitions(framesLimit,
+                frameSize, outputGroupCount, groupStateSizeInBytes,
+                gracePartitions, fudgeFactor);
+        maxRecursionLevel = getMaxLevelsIfUsingSortGrouper(framesLimit,
+                inputRecordCount, groupStateSizeInBytes);
 
-        this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid.0.keys", outputGroupCount
-                / gracePartitions);
-        this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid.0.records", inputRecordCount
-                / gracePartitions);
-        this.debugCounters.updateOptionalCustomizedCounter(".partition.grace", gracePartitions);
-        this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid.0.partitions", hybridHashPartitions);
-        this.debugCounters.updateOptionalCustomizedCounter(".partition.maxRecursionLevel", maxRecursionLevel);
+        this.debugCounters.updateOptionalCustomizedCounter(
+                ".partition.hybrid.0.keys", outputGroupCount / gracePartitions);
+        this.debugCounters.updateOptionalCustomizedCounter(
+                ".partition.hybrid.0.records", inputRecordCount
+                        / gracePartitions);
+        this.debugCounters.updateOptionalCustomizedCounter(".partition.grace",
+                gracePartitions);
+        this.debugCounters.updateOptionalCustomizedCounter(
+                ".partition.hybrid.0.partitions", hybridHashPartitions);
+        this.debugCounters.updateOptionalCustomizedCounter(
+                ".partition.maxRecursionLevel", maxRecursionLevel);
 
         if (gracePartitions > 1) {
-            grouper = new GracePartitioner(ctx, framesLimit, gracePartitions, keyFields, hashLevelSeed
-                    + hashLevelSeedVariable, hashFunctionFamilies, inRecordDesc);
-            hashLevelSeedVariable += LocalGroupOperatorDescriptor.computeMaxRecursiveLevel(inputRecordCount,
-                    groupStateSizeInBytes, framesLimit, frameSize);
+            grouper = new GracePartitioner(ctx, framesLimit, gracePartitions,
+                    keyFields, hashLevelSeed + hashLevelSeedVariable,
+                    hashFunctionFamilies, inRecordDesc);
+            hashLevelSeedVariable += LocalGroupOperatorDescriptor
+                    .computeMaxRecursiveLevel(inputRecordCount,
+                            groupStateSizeInBytes, framesLimit, frameSize);
         } else {
-            grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
-                    finalMergerFactory, inRecordDesc, outRecordDesc, false, outputWriter, true, tableSize,
-                    comparatorFactories, hashFunctionFactories, hybridHashPartitions, true,
-                    isInputGloballyHashPartitioned);
+            grouper = new HybridHashGrouper(ctx, keyFields, decorFields,
+                    framesLimit, aggregatorFactory, finalMergerFactory,
+                    inRecordDesc, outRecordDesc, false, outputWriter, true,
+                    tableSize, comparatorFactories, hashFunctionFactories,
+                    hybridHashPartitions, true);
         }
         grouper.open();
     }
 
     /**
-     * Compute the number of partitions to be produced by the grace partitioner. The grace partitioner partitions the
+     * Compute the number of partitions to be produced by the grace partitioner.
+     * The grace partitioner partitions the
      * input data so that each partition contains no more than M^2 group states.
      * 
      * @param framesLimit
@@ -155,12 +171,14 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
      * @param fudgeFactor
      * @return
      */
-    public static int computeGracePartitions(int framesLimit, int frameSize, long outputGroupCount,
-            int groupStateSizeInBytes, double fudgeFactor) {
+    public static int computeGracePartitions(int framesLimit, int frameSize,
+            long outputGroupCount, int groupStateSizeInBytes, double fudgeFactor) {
         int minGracePartitions = 1;
 
-        while (computeHybridHashPartitions(framesLimit, frameSize, outputGroupCount, groupStateSizeInBytes,
-                minGracePartitions, fudgeFactor) * fudgeFactor > framesLimit - 1) {
+        while (computeHybridHashPartitions(framesLimit, frameSize,
+                outputGroupCount, groupStateSizeInBytes, minGracePartitions,
+                fudgeFactor)
+                * fudgeFactor > framesLimit - 1) {
             minGracePartitions *= framesLimit;
         }
 
@@ -168,20 +186,27 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         //                1,
         //                Math.ceil(outputGroupCount * groupStateSizeInBytes / frameSize * fudgeFactor
         //                        / Math.pow(framesLimit - 1, 2)));
-        return (int) Math.pow(framesLimit, (int) Math.ceil(Math.log(minGracePartitions) / Math.log(framesLimit)));
+        return (int) Math.pow(
+                framesLimit,
+                (int) Math.ceil(Math.log(minGracePartitions)
+                        / Math.log(framesLimit)));
     }
 
-    public static int computeHybridHashPartitions(int framesLimit, int frameSize, long outputGroupCount,
-            int groupStateSizeInBytes, int gracePartitions, double fudgeFactor) {
-        double partitionGroupSizeInFrames = (double) outputGroupCount / gracePartitions * groupStateSizeInBytes
-                / frameSize;
+    public static int computeHybridHashPartitions(int framesLimit,
+            int frameSize, long outputGroupCount, int groupStateSizeInBytes,
+            int gracePartitions, double fudgeFactor) {
+        double partitionGroupSizeInFrames = (double) outputGroupCount
+                / gracePartitions * groupStateSizeInBytes / frameSize;
         // int maxPartitionCount = framesLimit - (int) Math.ceil(framesLimit * (fudgeFactor - 1)) - 1;
         return (int) //Math.min(maxPartitionCount,
-        Math.max(1, Math.ceil((partitionGroupSizeInFrames * fudgeFactor - framesLimit) / (framesLimit - 2)));//);
+        Math.max(1, Math
+                .ceil((partitionGroupSizeInFrames * fudgeFactor - framesLimit)
+                        / (framesLimit - 2)));//);
     }
 
     /**
-     * Compute the max level of recursion, based on the assumption that the levels of hybrid hash should
+     * Compute the max level of recursion, based on the assumption that the
+     * levels of hybrid hash should
      * not be more than the levels of merging used in a sort-based approach.
      * 
      * @param framesLimit
@@ -189,16 +214,20 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
      * @param groupStateSizeInBytes
      * @return
      */
-    protected int getMaxLevelsIfUsingSortGrouper(int framesLimit, long inputRecordCount, int groupStateSizeInBytes) {
-        return (int) Math.ceil(Math.log((double) inputRecordCount * groupStateSizeInBytes * frameSize / framesLimit)
+    protected int getMaxLevelsIfUsingSortGrouper(int framesLimit,
+            long inputRecordCount, int groupStateSizeInBytes) {
+        return (int) Math.ceil(Math.log((double) inputRecordCount
+                * groupStateSizeInBytes * frameSize / framesLimit)
                 / Math.log(framesLimit));
     }
 
     @Override
     public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
 
-        this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, 1);
-        this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT,
+        this.debugCounters.updateOptionalCommonCounter(
+                OptionalCommonCounters.FRAME_INPUT, 1);
+        this.debugCounters.updateOptionalCommonCounter(
+                OptionalCommonCounters.RECORD_INPUT,
                 buffer.getInt(buffer.capacity() - 4));
 
         if (grouper instanceof GracePartitioner) {
@@ -221,7 +250,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
         List<Integer> runLevels = new LinkedList<Integer>();
         List<Integer> runPartitions = new LinkedList<Integer>();
-        int initialPartitions = (grouper instanceof HybridHashGrouper) ? 1 : hybridHashPartitions;
+        int initialPartitions = (grouper instanceof HybridHashGrouper) ? 1
+                : hybridHashPartitions;
         for (int i = 0; i < runs.size(); i++) {
             runLevels.add(0);
             runPartitions.add(initialPartitions);
@@ -229,14 +259,27 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
         recursiveRunProcess(runs, runLevels, runPartitions);
 
-        ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);
-        ctx.getCounterContext().getCounter("profile.io.in.disk." + this.debugCounters.getDebugID(), true)
-                .update(profileIOInDisk);
-        ctx.getCounterContext().getCounter("profile.io.in.network." + this.debugCounters.getDebugID(), true)
+        ctx.getCounterContext()
+                .getCounter("profile.cpu." + this.debugCounters.getDebugID(),
+                        true).update(profileCPU);
+        ctx.getCounterContext()
+                .getCounter(
+                        "profile.io.in.disk." + this.debugCounters.getDebugID(),
+                        true).update(profileIOInDisk);
+        ctx.getCounterContext()
+                .getCounter(
+                        "profile.io.in.network."
+                                + this.debugCounters.getDebugID(), true)
                 .update(profileIOInNetwork);
-        ctx.getCounterContext().getCounter("profile.io.out.disk." + this.debugCounters.getDebugID(), true)
+        ctx.getCounterContext()
+                .getCounter(
+                        "profile.io.out.disk."
+                                + this.debugCounters.getDebugID(), true)
                 .update(profileIOOutDisk);
-        ctx.getCounterContext().getCounter("profile.io.out.network." + this.debugCounters.getDebugID(), true)
+        ctx.getCounterContext()
+                .getCounter(
+                        "profile.io.out.network."
+                                + this.debugCounters.getDebugID(), true)
                 .update(profileIOOutNetwork);
 
         profileCPU = 0;
@@ -249,7 +292,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         this.debugCounters.reset();
     }
 
-    private void recursiveRunProcess(List<RunFileReader> runs, List<Integer> runLevels, List<Integer> runPartitions)
+    private void recursiveRunProcess(List<RunFileReader> runs,
+            List<Integer> runLevels, List<Integer> runPartitions)
             throws HyracksDataException {
         if (keyFieldsInGroupState == null) {
             keyFieldsInGroupState = new int[keyFields.length];
@@ -269,8 +313,10 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
         IBinaryHashFunctionFactory[] hashFunctionFactories = new IBinaryHashFunctionFactory[this.hashFunctionFamilies.length];
         for (int i = 0; i < hashFunctionFactories.length; i++) {
-            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter.getFunctionFactoryFromFunctionFamily(
-                    this.hashFunctionFamilies[i], hashLevelSeed + hashLevelSeedVariable + hashLevel);
+            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter
+                    .getFunctionFactoryFromFunctionFamily(
+                            this.hashFunctionFamilies[i], hashLevelSeed
+                                    + hashLevelSeedVariable + hashLevel);
         }
 
         ByteBuffer inputBuffer = ctx.allocateFrame();
@@ -287,19 +333,25 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                 runIdx = 0;
                 hashLevel = runLevel;
                 for (int i = 0; i < hashFunctionFactories.length; i++) {
-                    hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter.getFunctionFactoryFromFunctionFamily(
-                            this.hashFunctionFamilies[i], hashLevelSeed + hashLevelSeedVariable + hashLevel);
+                    hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter
+                            .getFunctionFactoryFromFunctionFamily(
+                                    this.hashFunctionFamilies[i], hashLevelSeed
+                                            + hashLevelSeedVariable + hashLevel);
                 }
             }
 
-            this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid." + runLevel + ".runs", 1);
-            this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid." + runLevel + "." + runIdx
-                    + ".partitions", runPartition);
+            this.debugCounters.updateOptionalCustomizedCounter(
+                    ".partition.hybrid." + runLevel + ".runs", 1);
+            this.debugCounters.updateOptionalCustomizedCounter(
+                    ".partition.hybrid." + runLevel + "." + runIdx
+                            + ".partitions", runPartition);
 
-            HybridHashGrouper hybridHashGrouper = new HybridHashGrouper(ctx, keyFieldsInGroupState,
-                    decorFieldsInGroupState, framesLimit, partialMergerFactory, finalMergerFactory, outRecordDesc,
-                    outRecordDesc, true, outputWriter, true, tableSize, comparatorFactories, hashFunctionFactories,
-                    runPartition, true, isInputGloballyHashPartitioned);
+            HybridHashGrouper hybridHashGrouper = new HybridHashGrouper(ctx,
+                    keyFieldsInGroupState, decorFieldsInGroupState,
+                    framesLimit, partialMergerFactory, finalMergerFactory,
+                    outRecordDesc, outRecordDesc, true, outputWriter, true,
+                    tableSize, comparatorFactories, hashFunctionFactories,
+                    runPartition, true);
 
             long framesProcessed = 0;
             long recordsProcessed = 0;
@@ -318,33 +370,44 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
             runReader.close();
 
-            this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid." + runLevel + "." + runIdx
-                    + ".frame.input", framesProcessed);
-            this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid." + runLevel + "." + runIdx
-                    + ".record.input", recordsProcessed);
+            this.debugCounters.updateOptionalCustomizedCounter(
+                    ".partition.hybrid." + runLevel + "." + runIdx
+                            + ".frame.input", framesProcessed);
+            this.debugCounters.updateOptionalCustomizedCounter(
+                    ".partition.hybrid." + runLevel + "." + runIdx
+                            + ".record.input", recordsProcessed);
 
             hybridHashGrouper.wrapup();
 
-            int rawRecordsInResidentPartition = hybridHashGrouper.getRawRecordsInResidentPartition();
-            int groupsInResidentPartition = hybridHashGrouper.getGroupsInResidentPartition();
-            List<Integer> rawRecordsInSpillingPartitions = hybridHashGrouper.getRawRecordsInSpillingPartitions();
-            List<RunFileReader> runsFromHybridHash = hybridHashGrouper.getOutputRunReaders();
+            int rawRecordsInResidentPartition = hybridHashGrouper
+                    .getRawRecordsInResidentPartition();
+            int groupsInResidentPartition = hybridHashGrouper
+                    .getGroupsInResidentPartition();
+            List<Integer> rawRecordsInSpillingPartitions = hybridHashGrouper
+                    .getRawRecordsInSpillingPartitions();
+            List<RunFileReader> runsFromHybridHash = hybridHashGrouper
+                    .getOutputRunReaders();
 
             hybridHashGrouper.close();
 
             while (runsFromHybridHash.size() > 0) {
-                RunFileReader runReaderFromHybridHash = runsFromHybridHash.remove(0);
+                RunFileReader runReaderFromHybridHash = runsFromHybridHash
+                        .remove(0);
 
                 if (runLevel + 1 > maxRecursionLevel) {
                     // fallback to hash-sort algorithm
-                    HashGroupSortMergeGrouper hashSortGrouper = new HashGroupSortMergeGrouper(ctx,
-                            keyFieldsInGroupState, decorFieldsInGroupState, framesLimit, tableSize,
-                            firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
-                            partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, outputWriter);
+                    HashGroupSortMergeGrouper hashSortGrouper = new HashGroupSortMergeGrouper(
+                            ctx, keyFieldsInGroupState,
+                            decorFieldsInGroupState, framesLimit, tableSize,
+                            firstKeyNormalizerFactory, comparatorFactories,
+                            hashFunctionFactories, aggregatorFactory,
+                            partialMergerFactory, finalMergerFactory,
+                            outRecordDesc, outRecordDesc, outputWriter);
                     hashSortGrouper.open();
                     runReaderFromHybridHash.open();
 
-                    this.debugCounters.updateOptionalCustomizedCounter(".fallback.runs", 1);
+                    this.debugCounters.updateOptionalCustomizedCounter(
+                            ".fallback.runs", 1);
 
                     framesProcessed = 0;
 
@@ -356,15 +419,19 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                         hashSortGrouper.nextFrame(inputBuffer);
                     }
 
-                    this.debugCounters.updateOptionalCustomizedCounter(".fallback.frame.input", framesProcessed);
+                    this.debugCounters.updateOptionalCustomizedCounter(
+                            ".fallback.frame.input", framesProcessed);
 
                     hashSortGrouper.close();
                     continue;
                 }
 
                 int rawRecordsInRun = rawRecordsInSpillingPartitions.remove(0);
-                int recursivePartition = computeHybridHashPartitions(framesLimit, frameSize,
-                        (int) ((double) groupsInResidentPartition / rawRecordsInResidentPartition * rawRecordsInRun),
+                int recursivePartition = computeHybridHashPartitions(
+                        framesLimit,
+                        frameSize,
+                        (int) ((double) groupsInResidentPartition
+                                / rawRecordsInResidentPartition * rawRecordsInRun),
                         groupStateSizeInBytes, 1, fudgeFactor);
                 runs.add(runReaderFromHybridHash);
                 runLevels.add(runLevel + 1);

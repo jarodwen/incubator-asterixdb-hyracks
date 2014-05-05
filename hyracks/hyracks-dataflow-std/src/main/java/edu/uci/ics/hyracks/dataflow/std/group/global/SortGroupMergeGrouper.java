@@ -105,7 +105,8 @@ public class SortGroupMergeGrouper implements IFrameWriter {
                 mergeDecorFields[i] = keyFields.length + i;
             }
             MergeGrouper mergeGrouper = new MergeGrouper(ctx, mergeKeyFields, mergeDecorFields, framesLimit,
-                    comparatorFactories, partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc);
+                    comparatorFactories, firstKeyNormalizerFactory, partialMergerFactory, finalMergerFactory,
+                    outRecordDesc, outRecordDesc);
             mergeGrouper.process(runs, outputWriter);
         }
 

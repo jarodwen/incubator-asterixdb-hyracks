@@ -10,6 +10,8 @@ import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryComparator;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryComparatorFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFactory;
+import edu.uci.ics.hyracks.api.dataflow.value.INormalizedKeyComputer;
+import edu.uci.ics.hyracks.api.dataflow.value.INormalizedKeyComputerFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.ITuplePartitionComputerFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.RecordDescriptor;
 import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
@@ -37,6 +39,7 @@ public class MergeGrouper {
     private final RecordDescriptor inRecDesc, outRecDesc;
 
     private final IBinaryComparator[] comparators;
+    private final INormalizedKeyComputer nmkComputer;
 
     private final int framesLimit;
 
@@ -64,17 +67,18 @@ public class MergeGrouper {
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
 
     public MergeGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            IBinaryComparatorFactory[] comparatorFactories, IAggregatorDescriptorFactory partialMergerFactory,
-            IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor inRecDesc, RecordDescriptor outRecDesc)
-            throws HyracksDataException {
-        this(ctx, keyFields, decorFields, framesLimit, 1, comparatorFactories, null, partialMergerFactory,
-                finalMergerFactory, inRecDesc, outRecDesc);
+            IBinaryComparatorFactory[] comparatorFactories, INormalizedKeyComputerFactory normalizerFactory,
+            IAggregatorDescriptorFactory partialMergerFactory, IAggregatorDescriptorFactory finalMergerFactory,
+            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc) throws HyracksDataException {
+        this(ctx, keyFields, decorFields, framesLimit, 1, comparatorFactories, normalizerFactory, null,
+                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc);
     }
 
     public MergeGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit, int partitions,
-            IBinaryComparatorFactory[] comparatorFactories, IBinaryHashFunctionFactory[] hashFunctionFactories,
-            IAggregatorDescriptorFactory partialMergerFactory, IAggregatorDescriptorFactory finalMergerFactory,
-            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc) throws HyracksDataException {
+            IBinaryComparatorFactory[] comparatorFactories, INormalizedKeyComputerFactory normalizerFactory,
+            IBinaryHashFunctionFactory[] hashFunctionFactories, IAggregatorDescriptorFactory partialMergerFactory,
+            IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor inRecDesc, RecordDescriptor outRecDesc)
+            throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -83,8 +87,11 @@ public class MergeGrouper {
         for (int i = 0; i < this.comparators.length; i++) {
             this.comparators[i] = comparatorFactories[i].createBinaryComparator();
         }
-        this.partialMerger = partialMergerFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, keyFields);
-        this.finalMerger = finalMergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, keyFields, keyFields);
+        this.nmkComputer = (normalizerFactory == null) ? null : normalizerFactory.createNormalizedKeyComputer();
+
+        this.partialMerger = partialMergerFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, keyFields,
+                null);
+        this.finalMerger = finalMergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, keyFields, keyFields, null);
         this.inRecDesc = inRecDesc;
         this.outRecDesc = outRecDesc;
 
@@ -177,7 +184,7 @@ public class MergeGrouper {
         IAggregatorDescriptor merger = (isFinal) ? finalMerger : partialMerger;
 
         RunMergingGroupingFrameReader mergeFrameReader = new RunMergingGroupingFrameReader(ctx, runCursors, inFrames,
-                keyFields, decorFields, comparators, (tuplePartitionComputerFactory == null) ? null
+                keyFields, decorFields, comparators, nmkComputer, (tuplePartitionComputerFactory == null) ? null
                         : tuplePartitionComputerFactory.createPartitioner(), partitions, merger, mergeState, inRecDesc,
                 outRecDesc);
         mergeFrameReader.open();

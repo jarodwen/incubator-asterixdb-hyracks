@@ -98,12 +98,12 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         this.bufferTupleAccessor = new FrameTupleAccessor(ctx.getFrameSize(), inRecDesc);
         this.bufferTupleAccessorForComparison = new FrameTupleAccessor(ctx.getFrameSize(), inRecDesc);
 
-        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, keyFields);
+        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, keyFields, null);
         int[] storedKeys = new int[keyFields.length];
         for (int i = 0; i < storedKeys.length; i++) {
             storedKeys[i] = i;
         }
-        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeys, storedKeys);
+        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeys, storedKeys, null);
 
         this.aggregateState = this.aggregator.createAggregateStates();
 
@@ -392,7 +392,7 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
                     flushOption.getOutputState() == GroupOutputState.RESULT_STATE);
             if (appender.getTupleCount() > 0) {
                 FrameUtils.flushFrame(outFrame, writer);
-                if(isGenerateRuns){
+                if (isGenerateRuns) {
                     profileIOOutDisk++;
                 } else {
                     profileIOOutNetwork++;
@@ -438,13 +438,13 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                     appender.getTupleCount());
-            
-            if(isGenerateRuns){
+
+            if (isGenerateRuns) {
                 profileIOOutDisk++;
             } else {
                 profileIOOutNetwork++;
             }
-            
+
             this.debugOptionalIO++;
             appender.reset(outFrame, true);
             if (!appender.append(tupleBuilder.getFieldEndOffsets(), tupleBuilder.getByteArray(), 0,
@@ -484,13 +484,17 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugOptionalSortCPUCompare = 0;
         this.debugOptionalSortCPUCopy = 0;
         this.debugCounters.reset();
-        
+
         ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);
-        ctx.getCounterContext().getCounter("profile.io.in.disk." + this.debugCounters.getDebugID(), true).update(profileIOInDisk);
-        ctx.getCounterContext().getCounter("profile.io.in.network." + this.debugCounters.getDebugID(), true).update(profileIOInNetwork);
-        ctx.getCounterContext().getCounter("profile.io.out.disk." + this.debugCounters.getDebugID(), true).update(profileIOOutDisk);
-        ctx.getCounterContext().getCounter("profile.io.out.network." + this.debugCounters.getDebugID(), true).update(profileIOOutNetwork);
-        
+        ctx.getCounterContext().getCounter("profile.io.in.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInDisk);
+        ctx.getCounterContext().getCounter("profile.io.in.network." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInNetwork);
+        ctx.getCounterContext().getCounter("profile.io.out.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOOutDisk);
+        ctx.getCounterContext().getCounter("profile.io.out.network." + this.debugCounters.getDebugID(), true)
+                .update(profileIOOutNetwork);
+
         profileCPU = 0;
         profileIOInDisk = 0;
         profileIOInNetwork = 0;

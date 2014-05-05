@@ -32,8 +32,9 @@ import edu.uci.ics.hyracks.dataflow.common.data.partition.FieldHashPartitionComp
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileReader;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileWriter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.HashFunctionFamilyFactoryAdapter;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.IFrameWriterRunGenerator;
 
-public class GracePartitioner implements IFrameWriter {
+public class GracePartitioner implements IFrameWriterRunGenerator {
 
     private int processedTuple = 0;
 
@@ -241,6 +242,16 @@ public class GracePartitioner implements IFrameWriter {
 
     public List<RunFileReader> getOutputRunReaders() {
         return partitionRuns;
+    }
+
+    @Override
+    public int getRunsCount() {
+        return partitionRuns.size();
+    }
+
+    @Override
+    public void wrapup() throws HyracksDataException {
+        // Nothing need to do here
     }
 
 }

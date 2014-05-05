@@ -80,8 +80,10 @@ public class PreCluster extends AbstractHistogramPushBasedGrouper {
             storedKeyFields[i] = i;
         }
 
-        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, storedKeyFields);
-        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeyFields, storedKeyFields);
+        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, storedKeyFields,
+                null);
+        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeyFields, storedKeyFields,
+                null);
         this.aggregateState = this.aggregator.createAggregateStates();
 
         this.inputFrameAccessor = new FrameTupleAccessor(frameSize, inRecDesc);

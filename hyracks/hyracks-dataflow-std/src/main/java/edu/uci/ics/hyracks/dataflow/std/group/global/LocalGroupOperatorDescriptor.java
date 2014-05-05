@@ -32,14 +32,7 @@ import edu.uci.ics.hyracks.dataflow.std.base.AbstractSingleActivityOperatorDescr
 import edu.uci.ics.hyracks.dataflow.std.base.AbstractUnaryInputUnaryOutputOperatorNodePushable;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashFunctionFamilyFactoryAdapter;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.AbstractHistogramPushBasedGrouper;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.HashGroupSortMergeGrouper;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.HashGrouper;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.HybridHashGrouper;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.PreCluster;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.RecursiveHybridHashGrouper;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.SortGroupMergeGrouper;
-import edu.uci.ics.hyracks.dataflow.std.group.global.groupers.SortGrouper;
+import edu.uci.ics.hyracks.dataflow.std.group.global.data.IDataPartitionDescriptor;
 
 /**
  * This class is the hyracks operator for local group-by operation. It is implemented so that the actual
@@ -76,6 +69,11 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
     private final int framesLimit, levelSeed, tableSize;
 
+    /**
+     * Descriptor for input data
+     */
+    private final IDataPartitionDescriptor dataPartDesc;
+
     private final int[] keyFields, decorFields;
 
     private final IAggregatorDescriptorFactory aggregatorFactory, partialMergerFactory, finalMergerFactory;
@@ -88,8 +86,6 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
     private final GroupAlgorithms algorithm;
 
-    private final boolean isInputGlobalHashPartitioned;
-
     private final int groupStateSizeInBytes;
     private final double fudgeFactor;
 
@@ -100,24 +96,30 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         /**
          * raw input data
          */
-        RAW_STATE, 
+        RAW_STATE,
         /**
-         * Partial aggregated data (need merging)     
+         * Partial aggregated data (need merging)
          */
-        GROUP_STATE, 
+        GROUP_STATE,
         /**
          * Completely aggregated data (ready for output)
          */
         RESULT_STATE
     }
-    
+
     public enum GroupAlgorithms {
         SORT_GROUP,
         SORT_GROUP_MERGE_GROUP,
         HASH_GROUP,
         HASH_GROUP_SORT_MERGE_GROUP,
+        // pre-partition for map
         SIMPLE_HYBRID_HASH,
+        // pre-partition for reduce
         RECURSIVE_HYBRID_HASH,
+        // dynamic-hybrid-hash for map
+        DYNAMIC_HYBRID_HASH_MAP,
+        // dynamic-hybrid-hash for reduce
+        DYNAMIC_HYBRID_HASH_REDUCE,
         PRECLUSTER;
 
         public boolean canBeTerminal() throws HyracksDataException {
@@ -125,10 +127,12 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                 case SORT_GROUP:
                 case HASH_GROUP:
                 case SIMPLE_HYBRID_HASH:
+                case DYNAMIC_HYBRID_HASH_MAP:
                     return false;
                 case SORT_GROUP_MERGE_GROUP:
                 case HASH_GROUP_SORT_MERGE_GROUP:
                 case RECURSIVE_HYBRID_HASH:
+                case DYNAMIC_HYBRID_HASH_REDUCE:
                 case PRECLUSTER:
                     return true;
             }
@@ -137,12 +141,12 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
     }
 
     public LocalGroupOperatorDescriptor(IOperatorDescriptorRegistry spec, int[] keyFields, int[] decorFields,
-            int framesLimit, int tableSize, int groupStateSizeInBytes,
+            IDataPartitionDescriptor dataPartDesc, int framesLimit, int tableSize, int groupStateSizeInBytes,
             double fudgeFactor, IBinaryComparatorFactory[] comparatorFactories,
             IBinaryHashFunctionFamily[] hashFamilies, INormalizedKeyComputerFactory firstNormalizerFactory,
             IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory partialMergerFactory,
             IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor outRecDesc, GroupAlgorithms algorithm,
-            int levelSeed, boolean isInputGlobalHashPartitioned) throws HyracksDataException {
+            int levelSeed) throws HyracksDataException {
         super(spec, 1, 1);
         this.framesLimit = framesLimit;
         this.tableSize = tableSize;
@@ -152,6 +156,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         }
         this.keyFields = keyFields;
         this.decorFields = decorFields;
+        this.dataPartDesc = dataPartDesc;
         this.levelSeed = levelSeed;
         this.aggregatorFactory = aggregatorFactory;
         this.partialMergerFactory = partialMergerFactory;
@@ -164,8 +169,6 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
-
-        this.isInputGlobalHashPartitioned = isInputGlobalHashPartitioned;
     }
 
     @Override
@@ -189,9 +192,9 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         }
 
         // compute the number of records and groups in this partition
-        final long recordsInPartition = inputPartitionDesc.getRecordCountInPartition(partition);
+        final long recordsInPartition = dataPartDesc.getRawRowCountInPartition(partition);
 
-        final long groupsInPartitions = inputPartitionDesc.getKeyCountInPartition(partition);
+        final long groupsInPartitions = dataPartDesc.getUniqueRowCountInPartition(keyFields, partition);
 
         return new AbstractUnaryInputUnaryOutputOperatorNodePushable() {
 
@@ -222,14 +225,13 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                     case SIMPLE_HYBRID_HASH:
                         grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize,
-                                comparatorFactories, hashFunctionFactories, 1, true, isInputGlobalHashPartitioned);
+                                comparatorFactories, hashFunctionFactories, 1, true);
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
-                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer,
-                                isInputGlobalHashPartitioned);
+                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer);
                         break;
                     case PRECLUSTER:
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,

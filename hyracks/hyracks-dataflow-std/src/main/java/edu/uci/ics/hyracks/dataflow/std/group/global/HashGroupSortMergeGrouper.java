@@ -96,8 +96,8 @@ public class HashGroupSortMergeGrouper implements IFrameWriter {
                 mergeDecorFields[i] = keyFields.length + i;
             }
             MergeGrouper mergeGrouper = new MergeGrouper(ctx, mergeKeyFields, mergeDecorFields, framesLimit, tableSize,
-                    comparatorFactories, hashFunctionFactories, partialMergerFactory, finalMergerFactory,
-                    outRecordDesc, outRecordDesc);
+                    comparatorFactories, firstKeyNormalizerFactory, hashFunctionFactories, partialMergerFactory,
+                    finalMergerFactory, outRecordDesc, outRecordDesc);
             mergeGrouper.process(runs, outputWriter);
         }
     }
