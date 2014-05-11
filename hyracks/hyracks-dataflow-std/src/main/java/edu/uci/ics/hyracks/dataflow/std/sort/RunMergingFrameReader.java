@@ -31,17 +31,17 @@ import edu.uci.ics.hyracks.dataflow.std.util.ReferenceEntry;
 import edu.uci.ics.hyracks.dataflow.std.util.ReferencedPriorityQueue;
 
 public class RunMergingFrameReader implements IFrameReader {
-    private final IHyracksTaskContext ctx;
-    private final IFrameReader[] runCursors;
+    protected final IHyracksTaskContext ctx;
+    protected final IFrameReader[] runCursors;
     private final List<ByteBuffer> inFrames;
-    private final int[] sortFields;
-    private final IBinaryComparator[] comparators;
+    protected final int[] sortFields;
+    protected final IBinaryComparator[] comparators;
     private final INormalizedKeyComputer nmkComputer;
     private final RecordDescriptor recordDesc;
-    private final FrameTupleAppender outFrameAppender;
-    private ReferencedPriorityQueue topTuples;
-    private int[] tupleIndexes;
-    private FrameTupleAccessor[] tupleAccessors;
+    protected final FrameTupleAppender outFrameAppender;
+    protected ReferencedPriorityQueue topTuples;
+    protected int[] tupleIndexes;
+    protected FrameTupleAccessor[] tupleAccessors;
 
     public RunMergingFrameReader(IHyracksTaskContext ctx, IFrameReader[] runCursors, List<ByteBuffer> inFrames,
             int[] sortFields, IBinaryComparator[] comparators, INormalizedKeyComputer nmkComputer,
@@ -108,7 +108,7 @@ public class RunMergingFrameReader implements IFrameReader {
         }
     }
 
-    private void setNextTopTuple(int runIndex, int[] tupleIndexes, IFrameReader[] runCursors,
+    protected void setNextTopTuple(int runIndex, int[] tupleIndexes, IFrameReader[] runCursors,
             FrameTupleAccessor[] tupleAccessors, ReferencedPriorityQueue topTuples) throws HyracksDataException {
         boolean exists = hasNextTuple(runIndex, tupleIndexes, runCursors, tupleAccessors);
         if (exists) {
@@ -145,7 +145,7 @@ public class RunMergingFrameReader implements IFrameReader {
         }
     }
 
-    private Comparator<ReferenceEntry> createEntryComparator(final IBinaryComparator[] comparators) {
+    protected Comparator<ReferenceEntry> createEntryComparator(final IBinaryComparator[] comparators) {
         return new Comparator<ReferenceEntry>() {
             public int compare(ReferenceEntry tp1, ReferenceEntry tp2) {
                 int nmk1 = tp1.getNormalizedKey();

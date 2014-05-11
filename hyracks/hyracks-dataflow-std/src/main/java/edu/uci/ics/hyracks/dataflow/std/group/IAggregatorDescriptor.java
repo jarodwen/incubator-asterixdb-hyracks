@@ -102,5 +102,25 @@ public interface IAggregatorDescriptor {
             AggregateState state) throws HyracksDataException;
 
     public void close();
+    
+    /**
+     * Aggregate the value from the accessor with the state stored in the given bytes.
+     * 
+     * @param accessor
+     *            Accessor to the frame containing the input tuple
+     * @param tIndex
+     *            The index of the input tuple in the frame
+     * @param data
+     *            The binary state containing the aggregate state
+     * @param offset
+     *            The offset of the aggregation state in the binary state
+     * @param length
+     *            The length of the aggregation state in the binary state
+     * @param state
+     *            The object aggregation state.
+     * @throws HyracksDataException
+     */
+    public void aggregate(IFrameTupleAccessor accessor, int tIndex, byte[] data, int offset, int length,
+            AggregateState state) throws HyracksDataException;
 
 }

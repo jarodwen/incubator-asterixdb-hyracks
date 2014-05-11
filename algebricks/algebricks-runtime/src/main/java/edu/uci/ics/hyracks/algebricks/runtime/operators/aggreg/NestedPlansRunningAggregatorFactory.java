@@ -140,6 +140,12 @@ public class NestedPlansRunningAggregatorFactory implements IAggregatorDescripto
                     }
                 }
             }
+
+            @Override
+            public void aggregate(IFrameTupleAccessor accessor, int tIndex, byte[] data, int offset, int length,
+                    AggregateState state) throws HyracksDataException {
+                throw new IllegalStateException("this method has not been implemented.");
+            }
         };
     }
 
