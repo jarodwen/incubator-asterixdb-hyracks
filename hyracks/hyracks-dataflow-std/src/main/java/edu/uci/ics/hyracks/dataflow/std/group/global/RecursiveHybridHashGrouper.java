@@ -182,10 +182,6 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             minGracePartitions *= framesLimit;
         }
 
-        //        int minGracePartitions = (int) Math.max(
-        //                1,
-        //                Math.ceil(outputGroupCount * groupStateSizeInBytes / frameSize * fudgeFactor
-        //                        / Math.pow(framesLimit - 1, 2)));
         return (int) Math.pow(
                 framesLimit,
                 (int) Math.ceil(Math.log(minGracePartitions)

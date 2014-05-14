@@ -15,8 +15,11 @@
 package edu.uci.ics.hyracks.dataflow.std.group.global;
 
 import java.nio.ByteBuffer;
+import java.util.BitSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.logging.Logger;
 
-import edu.uci.ics.hyracks.api.comm.IFrameTupleAccessor;
 import edu.uci.ics.hyracks.api.comm.IFrameWriter;
 import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryComparator;
@@ -30,14 +33,20 @@ import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
 import edu.uci.ics.hyracks.dataflow.common.comm.io.ArrayTupleBuilder;
 import edu.uci.ics.hyracks.dataflow.common.comm.io.FrameTupleAccessor;
 import edu.uci.ics.hyracks.dataflow.common.comm.io.FrameTupleAppender;
+import edu.uci.ics.hyracks.dataflow.common.comm.util.FrameUtils;
 import edu.uci.ics.hyracks.dataflow.common.data.partition.FieldHashPartitionComputerFactory;
+import edu.uci.ics.hyracks.dataflow.common.io.RunFileWriter;
+import edu.uci.ics.hyracks.dataflow.std.group.AggregateState;
 import edu.uci.ics.hyracks.dataflow.std.group.FrameMemManager;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptor;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption.GroupOutputState;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashFunctionFamilyFactoryAdapter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashTableFrameTupleAppender;
 
-public class DynamicHybridHashGrouper implements IFrameWriter {
+public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
     /**
      * The length of hash table frame reference
@@ -81,8 +90,7 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
     private final IBinaryComparatorFactory[] comparatorFactories;
     private final IBinaryHashFunctionFamily[] hashFunctionFamilies;
     private final INormalizedKeyComputerFactory firstKeyNormalizerFactory;
-    private final IAggregatorDescriptorFactory aggregatorFactory,
-            partialMergerFactory, finalMergerFactory;
+    private final IAggregatorDescriptorFactory aggregatorFactory, partialMergerFactory, finalMergerFactory;
     private final RecordDescriptor inRecordDesc, outRecordDesc;
 
     /**
@@ -117,88 +125,52 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
     protected final int[] decorFields;
 
     /**
-     * The flag for whether it is a map group-by (so complete aggregtion is not
-     * needed)
-     */
-    private final boolean isMapGby;
-
-    /**
-     * The flag on whether the resident partition (i.e. in-memory hash table)
-     * should be
-     * partitioned and dynamically managed for better skew tolerance.
-     */
-    private final boolean isResidentPartitioned;
-
-    /**
      * The number of hash table slots.
      */
     private int tableSize;
 
     /**
-     * The number of spilled partitions.
+     * The number of partitions.
      */
-    private int numSpilledParts;
+    private final int numParts;
 
     /**
-     * The index of the first page of each spilled partition.
+     * The list of output buffers for the spilled partitions
      */
-    private int[] spilledPartsBufferIndex;
+    private final int[] partitionBuffers;
 
-    private boolean[] spilledPartsFlags;
+    private final int[] partitionOutputBuffers;
 
+    private final boolean[] partitionSpillingFlags;
+
+    private final boolean pinHighAbsorptionPartitions;
     /**
-     * The number of resident partitions, which is used to improve the skew
-     * tolerance.
+     * The flag on whether the last in-memory partition should be pinned, even
+     * its absorption has fallen below the average absorption ratio.
      */
-    private int numResidentParts;
+    private final boolean pinLastPartitionAlways;
 
-    /**
-     * The index of the first page of each resident partition.
-     */
-    private int[] residentPartsBufferIndex;
-
-    private boolean[] residentPartsFlags;
+    private final boolean[] partitionPinFlags;
 
     /**
      * The frame manager to manage the buffers.
      */
-    private FrameMemManager frameManager;
+    private final FrameMemManager frameManager;
+
+    private final int hashtableOutputBuffer;
 
     /**
      * Buffer IDs for the hash table headers. Each element in this array is a
      * frame ID from the frameManager.
      */
-    private int[] htHeaderFrameIds;
-
-    /**
-     * Buffer IDs for the hash table contents. The length of the array is equal
-     * to the number of partitions in the resident partition, and each element
-     * is the frame ID of the first frame in the list of frames for that
-     * resident partition.
-     */
-    private int[] htContentFrameIds;
-
-    /**
-     * Output buffer IDs for the spilled partitions.
-     */
-    private int[] spilledPartsOutBufferIds;
-
-    /**
-     * The buffer for output resident partition
-     */
-    private int residentPartOutputBufferId;
+    private int[] htHeaderFrames;
 
     /**
      * The number of raw records and keys in each resident partition. These two
      * arrays are used to pick the resident partition with lowest absorption
      * ratio to spill.
      */
-    private long[] recordsInResidentParts, keysInResidentParts;
-
-    /**
-     * The flag on whether the resident partition is decided by
-     */
-    private boolean isPartitionPredefined;
+    private long[] recordsInParts, keysInParts;
 
     /**
      * Hashing level random seed, so that group-by operations at different
@@ -223,6 +195,7 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
     private ITuplePartitionComputer tuplePartitionComputer;
     private IAggregatorDescriptor aggregator, partialMerger, finalMerger;
     private IBinaryHashFunctionFactory[] hashFunctionFactories;
+    private AggregateState aggState, partialAggState, finalAggState;
 
     /**
      * Hash function level variable, used to indicate different hash levels (so
@@ -234,8 +207,7 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
      * Frame accessors: inputFrameTupleAccessor is for the input frame, and
      * groupFrameTupleAccessor is for the group state.
      */
-    private FrameTupleAccessor inputFrameTupleAccessor,
-            groupFrameTupleAccessor;
+    private FrameTupleAccessor inputFrameTupleAccessor, groupFrameTupleAccessor;
 
     /**
      * Tuple builders: groupTupleBuild is for the group state in memory, and
@@ -245,8 +217,7 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
 
     private HashTableFrameTupleAppender hashtableFrameTupleAppender;
 
-    private FrameTupleAppender spillFrameTupleAppender,
-            outputFrameTupleAppender;
+    private FrameTupleAppender spillFrameTupleAppender, outputFrameTupleAppender;
 
     /**
      * The number of hash table slots each frame can contain
@@ -264,36 +235,37 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
     private byte bloomFilterByte = (byte) -1;
 
     /**
-     * The max hash key for resident partition (so the resident partition is in
-     * the range of [0, maxResidentHashkey]).
-     */
-    private int maxResidentHashkey;
-
-    /**
-     * The number of hash keys in a spilled partition.
-     */
-    private int spilledPartHashkeyRange;
-
-    /**
      * Is the hash table (for resident partition) full
      */
     private boolean isHashtableFull = false;
 
-    public DynamicHybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields,
-            int[] decorFields, int framesLimit, long inputRecordCount,
-            long outputGroupCount, int groupStateSizeInBytes,
-            double fudgeFactor, double htSlotRatio,
-            INormalizedKeyComputerFactory firstKeyNormalizerFactory,
-            IBinaryComparatorFactory[] comparatorFactories,
-            IBinaryHashFunctionFamily[] hashFunctionFamilies,
-            IAggregatorDescriptorFactory aggregatorFactory,
-            IAggregatorDescriptorFactory partialMergerFactory,
-            IAggregatorDescriptorFactory finalMergerFactory,
-            RecordDescriptor inRecordDescriptor,
-            RecordDescriptor outRecordDescriptor, int hashLevelSeed,
-            IFrameWriter outputWriter, boolean isMapGroupBy,
-            boolean isResidentPartitioned, boolean useMiniBloomFilter)
-            throws HyracksDataException {
+    /**
+     * the list of unpinned partition ids.
+     */
+    private List<Integer> unpinnedSpilledParts;
+
+    /**
+     * Flags to generate run files for spilled partitions
+     */
+    private final boolean isGenerateRuns;
+
+    private final RunFileWriter[] partSpillRunWriters;
+
+    private static final Logger LOGGER = Logger.getLogger(DynamicHybridHashGrouper.class.getSimpleName());
+
+    public DynamicHybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
+            long inputRecordCount, long outputGroupCount, int groupStateSizeInBytes, double fudgeFactor,
+            double htSlotRatio, INormalizedKeyComputerFactory firstKeyNormalizerFactory,
+            IBinaryComparatorFactory[] comparatorFactories, IBinaryHashFunctionFamily[] hashFunctionFamilies,
+            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory partialMergerFactory,
+            IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor inRecordDescriptor,
+            RecordDescriptor outRecordDescriptor, int hashLevelSeed, IFrameWriter outputWriter,
+            boolean useMiniBloomFilter, int numParts, boolean pinHighAbsorptionParts, boolean alwaysPinLastPart,
+            boolean isGenerateRuns) throws HyracksDataException {
+
+        super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, finalMergerFactory, inRecordDescriptor,
+                outRecordDescriptor, false, outputWriter, isGenerateRuns);
+
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -315,135 +287,30 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
         this.hashtableSlotRatio = htSlotRatio;
+        this.pinHighAbsorptionPartitions = pinHighAbsorptionParts;
+        this.pinLastPartitionAlways = alwaysPinLastPart;
 
-        this.isMapGby = isMapGroupBy;
-        this.isResidentPartitioned = isResidentPartitioned;
         this.useMiniBloomFilter = useMiniBloomFilter;
 
-    }
+        this.numParts = numParts;
+        this.partitionBuffers = new int[this.numParts];
+        this.partitionSpillingFlags = new boolean[this.numParts];
+        this.partitionPinFlags = new boolean[this.numParts];
+        this.partitionOutputBuffers = new int[this.numParts];
+        this.recordsInParts = new long[this.numParts];
+        this.keysInParts = new long[this.numParts];
+        for (int i = 0; i < this.numParts; i++) {
+            this.partitionSpillingFlags[i] = false;
+            this.partitionPinFlags[i] = false;
+            this.partitionBuffers[i] = -1;
+            this.partitionOutputBuffers[i] = -1;
+        }
 
-    /**
-     * This method decides the proper memory layout for the resident and spilled
-     * partitions, according to the input parameters. The basic algorithm to
-     * follow here is:<br/>
-     * 1. If isMapGby is true, only one spilled partition is needed, as we
-     * assume that the output buffers for partitioning are allocated by system
-     * so the algorithm does not need to do this. Also, the resident partition
-     * will not be pinned in memory so it finally could be spilled, if the
-     * absorption ratio is ??? <br/>
-     * 1.a If resident partition should be partitioned for better skew
-     * tolerance, then the number of partitions in the resident partition should
-     * be at least 2 (so around half of the resident partition could be spilled
-     * and renewed) but less than m/2 (so at least two frames should be
-     * assigned) to each resident partition. <br/>
-     * 1.b Otherwise, there will be only one partition in the resident
-     * partition, then all memory but one will be used for the in-memory
-     * hashtable
-     * 2. Otherwise, P spilled partitions are needed. P is computed based on the
-     * hybrid-hash formula.
-     * 2.a If resident partition should be partitioned for better skew
-     * tolerance, still the number of partitions in the resident partition
-     * should be at least p, where m is the number of frames for
-     * the hash table contents.
-     * 2.b Otherwise, all the memory allocated to the resident partition will be
-     * considered as a single partition, which is similar to the
-     * pre-partitioning algorithm.
-     * 
-     * @throws HyracksDataException
-     */
-    private void initMemoryLayout() throws HyracksDataException {
+        this.isGenerateRuns = isGenerateRuns;
+        this.partSpillRunWriters = new RunFileWriter[this.numParts];
 
-        // initialize the frame manager
         this.frameManager = new FrameMemManager(framesLimit, ctx);
-
-        // allocate the resident partition output buffer
-        this.residentPartOutputBufferId = frameManager.allocateFrame();
-
-        // frames for the hashtable: total and headers only
-        int framesForHashtable, framesForHashtableHeaders;
-
-        if (isMapGby) {
-            // no spilled partition is needed
-            this.numSpilledParts = 0;
-            // use M-1 frames for the hash table
-            framesForHashtable = framesLimit - 1;
-
-        } else {
-            // compute the number of partitions, using hybrid hash algorithm
-            this.numSpilledParts = computeHybridHashSpilledPartitions(
-                    framesLimit, frameSize, outputGroupCount,
-                    groupStateSizeInBytes, fudgeFactor);
-            if (!isResidentPartitioned) {
-                /**
-                 * If the resident partition is not partitions, enough
-                 * frames should be reserved so that the spilled partitions
-                 * can be properly spilled
-                 */
-                framesForHashtable = framesLimit - 1 - numSpilledParts;
-            } else {
-                // Use all memory for the hash table
-                framesForHashtable = framesLimit - 1;
-            }
-
-        }
-
-        this.tableSize = computeHashtableSlots(framesForHashtable, frameSize,
-                groupStateSizeInBytes, hashtableSlotRatio, HT_FRAME_REF_SIZE,
-                HT_TUPLE_REF_SIZE, useMiniBloomFilter,
-                HT_MINI_BLOOM_FILTER_SIZE);
-        framesForHashtableHeaders = getHeaderFrameCountForHashtable(
-                this.tableSize, frameSize, HT_FRAME_REF_SIZE,
-                HT_TUPLE_REF_SIZE, useMiniBloomFilter,
-                HT_MINI_BLOOM_FILTER_SIZE);
-
-        if (isResidentPartitioned) {
-            this.numResidentParts = getResidentPartitions(framesForHashtable
-                    - framesForHashtableHeaders, numSpilledParts);
-        } else {
-            this.numResidentParts = 1;
-        }
-
-        /**
-         * Compute the number of slots per frame for the hash table
-         */
-        this.htSlotsPerFrame = frameSize
-                / (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE
-                        : 0));
-
-        // create the hash table structures
-        initializeHashtable(framesForHashtableHeaders, framesForHashtable
-                - framesForHashtableHeaders);
-    }
-
-    /**
-     * Compute the inner partitions for the resident partition.
-     * 
-     * @param framesForHTContents
-     * @param numSpilledPartitions
-     * @return
-     */
-    private int getResidentPartitions(int framesForHTContents,
-            int numSpilledPartitions) {
-        return (int) Math.max(numSpilledPartitions, framesForHTContents
-                / MIN_FRAMES_PER_RESIDENT_PART);
-    }
-
-    /**
-     * Compute the number of hybrid hash spilled partitions.
-     * 
-     * @param framesLimit
-     * @param frameSize
-     * @param outputRecordCount
-     * @param recordSize
-     * @param fudgeFactor
-     * @return
-     */
-    public static int computeHybridHashSpilledPartitions(int framesLimit,
-            int frameSize, long outputRecordCount, int recordSize,
-            double fudgeFactor) {
-        return (int) Math.ceil((Math.ceil(outputRecordCount * recordSize
-                * fudgeFactor / frameSize) - (framesLimit - 1))
-                / (framesLimit - 2));
+        this.hashtableOutputBuffer = frameManager.allocateFrame();
     }
 
     /**
@@ -455,17 +322,43 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
      * @param framesForHashtable
      * @return
      */
-    public static int computeHashtableSlots(int framesForHashtable,
-            int frameSize, int recordSize, double htSlotRatio,
-            int bytesForFrameReference, int bytesForTupleReference,
-            boolean useMiniBloomfilter, int bytesForMiniBloomfilter) {
-        return (int) Math
-                .floor(framesForHashtable
-                        * frameSize
-                        / (((useMiniBloomfilter ? bytesForMiniBloomfilter : 0)
-                                + bytesForFrameReference + bytesForTupleReference))
-                        + (recordSize + bytesForFrameReference + bytesForTupleReference)
-                        / htSlotRatio);
+    public static int computeHashtableSlots(int framesForHashtable, int frameSize, int recordSize, double htSlotRatio,
+            int bytesForFrameReference, int bytesForTupleReference, boolean useMiniBloomfilter,
+            int bytesForMiniBloomfilter) {
+        int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameReference
+                + bytesForTupleReference;
+        int hashtableEntrySize = recordSize + bytesForFrameReference + bytesForTupleReference;
+        int headerRefPerFrame = frameSize / headerRefSize;
+        int entryPerFrame = frameSize / hashtableEntrySize;
+
+        int headerPages = (int) Math.ceil(framesForHashtable * entryPerFrame
+                / (headerRefPerFrame / htSlotRatio + entryPerFrame));
+
+        int slots = headerPages * headerRefPerFrame;
+
+        int numsToCheck = (int) Math.min(slots * 0.01, 1000);
+        BitSet candidates = new BitSet();
+        candidates.set(0, numsToCheck);
+        for (int i = (slots % 2 == 0) ? 0 : 1; i < numsToCheck; i = i + 2) {
+            candidates.set(i, false);
+        }
+        for (int i = 3; i < 1000; i = i + 2) {
+            int nextBit = candidates.nextSetBit(0);
+            while (nextBit >= 0) {
+                if ((slots + nextBit) % i == 0) {
+                    candidates.set(nextBit, false);
+                    if (candidates.cardinality() == 1) {
+                        break;
+                    }
+                }
+                nextBit = candidates.nextSetBit(nextBit + 1);
+            }
+            if (candidates.cardinality() == 1) {
+                break;
+            }
+        }
+
+        return slots + candidates.nextSetBit(0);
     }
 
     /**
@@ -480,47 +373,11 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
      * @param bytesForMiniBloomfilter
      * @return
      */
-    public static int getHeaderFrameCountForHashtable(int hashtableSlots,
-            int frameSize, int bytesForFrameRef, int bytesForTupleRef,
-            boolean useMiniBloomfilter, int bytesForMiniBloomfilter) {
-        return (int) Math.ceil(hashtableSlots
-                * ((useMiniBloomfilter ? bytesForMiniBloomfilter : 0)
-                        + bytesForFrameRef + bytesForTupleRef) / frameSize);
-    }
-
-    /**
-     * Initialize the header pages for the hash table.
-     * 
-     * @param hashtableHeaderFrameCount
-     * @param hashtableContentFrameCount
-     * @throws HyracksDataException
-     */
-    private void initializeHashtable(int hashtableHeaderFrameCount,
-            int hashtableContentFrameCount) throws HyracksDataException {
-        if (hashtableHeaderFrameCount < 0 || hashtableContentFrameCount < 0) {
-            throw new HyracksDataException("Hash table header frame ("
-                    + hashtableHeaderFrameCount + ") and content frames ("
-                    + hashtableContentFrameCount + ") cannot be negative.");
-        }
-        this.htHeaderFrameIds = new int[hashtableHeaderFrameCount];
-        for (int i = 0; i < hashtableHeaderFrameCount; i++) {
-            this.htHeaderFrameIds[i] = frameManager.allocateFrame();
-            if (this.htHeaderFrameIds[i] == -1) {
-                throw new HyracksDataException("Not enough memory for "
-                        + hashtableHeaderFrameCount
-                        + " header pages of a hash table.");
-            }
-            frameManager.resetFrame(htHeaderFrameIds[i]);
-        }
-        this.htContentFrameIds = new int[hashtableContentFrameCount];
-        for (int i = 0; i < hashtableContentFrameCount; i++) {
-            this.htContentFrameIds[i] = -1;
-        }
-
-        // update buffers for resident partitions
-        this.residentPartsBufferIndex = new int[this.numResidentParts];
-
-        // initialize buffers for spilled partitions
+    public static int getHeaderFrameCountForHashtable(int hashtableSlots, int frameSize, int bytesForFrameRef,
+            int bytesForTupleRef, boolean useMiniBloomfilter, int bytesForMiniBloomfilter) {
+        int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameRef + bytesForTupleRef;
+        int headerRefPerFrame = frameSize / headerRefSize;
+        return (int) Math.ceil((double) hashtableSlots / headerRefPerFrame);
     }
 
     /*
@@ -538,61 +395,73 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
 
         this.comparators = new IBinaryComparator[this.comparatorFactories.length];
         for (int i = 0; i < this.comparators.length; i++) {
-            this.comparators[i] = this.comparatorFactories[i]
-                    .createBinaryComparator();
+            this.comparators[i] = this.comparatorFactories[i].createBinaryComparator();
         }
 
         this.hashFunctionFactories = new IBinaryHashFunctionFactory[this.hashFunctionFamilies.length];
         for (int i = 0; i < hashFunctionFactories.length; i++) {
-            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter
-                    .getFunctionFactoryFromFunctionFamily(
-                            this.hashFunctionFamilies[i], hashLevelSeed
-                                    + hashLevelSeedVariable);
+            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter.getFunctionFactoryFromFunctionFamily(
+                    this.hashFunctionFamilies[i], hashLevelSeed + hashLevelSeedVariable);
         }
 
-        this.tuplePartitionComputer = new FieldHashPartitionComputerFactory(
-                keyFields, hashFunctionFactories).createPartitioner();
+        this.tuplePartitionComputer = new FieldHashPartitionComputerFactory(keyFields, hashFunctionFactories)
+                .createPartitioner();
 
-        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecordDesc,
-                outRecordDesc, keyFields, keysInPartialResult, null);
-        this.partialMerger = partialMergerFactory.createAggregator(ctx,
-                outRecordDesc, outRecordDesc, keysInPartialResult,
+        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecordDesc, outRecordDesc, keyFields,
                 keysInPartialResult, null);
-        this.finalMerger = finalMergerFactory.createAggregator(ctx,
-                outRecordDesc, outRecordDesc, keysInPartialResult,
+        this.aggState = aggregator.createAggregateStates();
+
+        this.partialMerger = partialMergerFactory.createAggregator(ctx, outRecordDesc, outRecordDesc,
+                keysInPartialResult, keysInPartialResult, null);
+        this.finalMerger = finalMergerFactory.createAggregator(ctx, outRecordDesc, outRecordDesc, keysInPartialResult,
                 keysInPartialResult, null);
 
-        this.inputFrameTupleAccessor = new FrameTupleAccessor(frameSize,
-                inRecordDesc);
-        this.groupFrameTupleAccessor = new FrameTupleAccessor(frameSize,
-                outRecordDesc);
+        this.inputFrameTupleAccessor = new FrameTupleAccessor(frameSize, inRecordDesc);
+        this.groupFrameTupleAccessor = new FrameTupleAccessor(frameSize, outRecordDesc);
 
-        this.groupTupleBuilder = new ArrayTupleBuilder(
-                outRecordDesc.getFieldCount());
-        this.outputTupleBuilder = new ArrayTupleBuilder(
-                outRecordDesc.getFieldCount());
+        this.groupTupleBuilder = new ArrayTupleBuilder(outRecordDesc.getFieldCount());
+        this.outputTupleBuilder = new ArrayTupleBuilder(outRecordDesc.getFieldCount());
 
-        this.hashtableFrameTupleAppender = new HashTableFrameTupleAppender(
-                frameSize, HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE);
+        this.hashtableFrameTupleAppender = new HashTableFrameTupleAppender(frameSize, HT_FRAME_REF_SIZE
+                + HT_TUPLE_REF_SIZE);
 
         this.spillFrameTupleAppender = new FrameTupleAppender(frameSize);
         this.outputFrameTupleAppender = new FrameTupleAppender(frameSize);
 
-        this.maxResidentHashkey = MAX_RAW_HASHKEY
-                / (framesLimit - numSpilledParts + numSpilledParts
-                        * framesLimit) * (framesLimit - numSpilledParts);
-        if (numSpilledParts == 0) {
-            this.maxResidentHashkey = MAX_RAW_HASHKEY;
+        // initialize hash table
+        this.tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes, hashtableSlotRatio,
+                HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useMiniBloomFilter, HT_MINI_BLOOM_FILTER_SIZE);
+        int htHeadersCount = getHeaderFrameCountForHashtable(this.tableSize, frameSize, HT_FRAME_REF_SIZE,
+                HT_TUPLE_REF_SIZE, useMiniBloomFilter, HT_MINI_BLOOM_FILTER_SIZE);
+        this.htHeaderFrames = new int[htHeadersCount];
+        for (int i = 0; i < this.htHeaderFrames.length; i++) {
+            this.htHeaderFrames[i] = frameManager.allocateFrame();
+            if (this.htHeaderFrames[i] < 0) {
+                throw new HyracksDataException("Not enough memory for in-mem hash table headers.");
+            }
         }
-        this.spilledPartHashkeyRange = (Integer.MAX_VALUE - maxResidentHashkey)
-                / (framesLimit - numSpilledParts + numSpilledParts
-                        * framesLimit) * framesLimit + 1;
-        if (numSpilledParts == 0) {
-            this.spilledPartHashkeyRange = 0;
-        }
+        resetHeaders();
 
-        // Initialize the memory layout
-        initMemoryLayout();
+        this.unpinnedSpilledParts = new LinkedList<Integer>();
+
+    }
+
+    private void resetHeaders() throws HyracksDataException {
+        for (int i = 0; i < this.htHeaderFrames.length; i++) {
+            if (this.htHeaderFrames[i] < 0) {
+                continue;
+            }
+            ByteBuffer headerFrame = frameManager.getFrame(this.htHeaderFrames[i]);
+            headerFrame.position(0);
+            while (headerFrame.position() + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE
+                    + HT_TUPLE_REF_SIZE < frameSize) {
+                if (useMiniBloomFilter) {
+                    headerFrame.put((byte) 0);
+                }
+                headerFrame.putInt(-1);
+                headerFrame.putInt(-1);
+            }
+        }
     }
 
     /*
@@ -607,108 +476,454 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
         int tupleCount = this.inputFrameTupleAccessor.getTupleCount();
 
         for (int tupleIndex = 0; tupleIndex < tupleCount; tupleIndex++) {
-            int rawHashValue = tuplePartitionComputer.partition(
-                    inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
+            int rawHashValue = tuplePartitionComputer.partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
             int htSlotID = rawHashValue % this.tableSize;
+            int partID = htSlotID % this.numParts;
+            if (this.partitionSpillingFlags[partID]) {
+                // partition is spilled
+                int spillPartID = partID;
+                if (this.partitionPinFlags[partID]) {
+                    // partition has been pinned, then it will be partitioned
+                    // into other non-pinned spilled partitions
+                    spillPartID = getUnpinnedSpilledPartIDForSpilling(partID);
+                }
 
+                this.groupTupleBuilder.reset();
+
+                for (int i : keyFields) {
+                    groupTupleBuilder.addField(inputFrameTupleAccessor, tupleIndex, i);
+                }
+
+                for (int i : decorFields) {
+                    groupTupleBuilder.addField(inputFrameTupleAccessor, tupleIndex, i);
+                }
+
+                aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
+
+                spillGroup(groupTupleBuilder, spillPartID);
+                this.recordsInParts[partID]++;
+                this.keysInParts[partID]++;
+            } else {
+                // The partition is not spilled: try to find a match first
+                if (findMatch(inputFrameTupleAccessor, tupleIndex, rawHashValue, htSlotID)) {
+                    // found a match: update the group-by state
+                    this.groupFrameTupleAccessor.reset(frameManager.getFrame(htLookupFrameIndex));
+                    int tupleStartOffset = this.groupFrameTupleAccessor.getTupleStartOffset(htLookupTupleIndex);
+                    int tupleEndOffset = this.groupFrameTupleAccessor.getTupleEndOffset(htLookupTupleIndex);
+                    this.aggregator.aggregate(inputFrameTupleAccessor, tupleIndex,
+                            frameManager.getFrame(htLookupFrameIndex).array(), tupleStartOffset, tupleEndOffset
+                                    - tupleStartOffset, aggState);
+                    this.recordsInParts[partID]++;
+                } else {
+                    // haven't found a match: either spill (for pinned part) or
+                    // add a new entry (for unpinned part)
+                    this.groupTupleBuilder.reset();
+
+                    for (int i : keyFields) {
+                        groupTupleBuilder.addField(inputFrameTupleAccessor, tupleIndex, i);
+                    }
+
+                    for (int i : decorFields) {
+                        groupTupleBuilder.addField(inputFrameTupleAccessor, tupleIndex, i);
+                    }
+
+                    aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
+
+                    if (this.partitionPinFlags[partID]) {
+                        // partition is pinned: need to flush this record
+                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(partID);
+                        spillGroup(groupTupleBuilder, unpinnedPartPicked);
+                        this.recordsInParts[unpinnedPartPicked]++;
+                        this.keysInParts[unpinnedPartPicked]++;
+                    } else {
+                        // try to insert a new entry
+                        getHTSlotPointer(htSlotID);
+                        if (this.partitionBuffers[partID] < 0) {
+                            this.partitionBuffers[partID] = frameManager.allocateFrame();
+                            if (this.partitionBuffers[partID] < 0) {
+                                throw new HyracksDataException("Failed to allocate a frame for partition " + partID);
+                            }
+                        }
+                        hashtableFrameTupleAppender.reset(frameManager.getFrame(this.partitionBuffers[partID]), false);
+                        if (!hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
+                                groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(), htLookupFrameIndex,
+                                htLookupTupleIndex)) {
+
+                            if (!allocateBufferForPart(partID)) {
+                                // haven't got extra buffer for the partition
+                                if (this.partitionSpillingFlags[partID]) {
+                                    spillGroup(groupTupleBuilder, partID);
+                                    this.recordsInParts[partID]++;
+                                    this.keysInParts[partID]++;
+                                } else {
+                                    // must be the last partition pinned
+                                    if (!this.partitionPinFlags[partID]) {
+                                        throw new HyracksDataException(
+                                                "Should not reach: partition is not pinned, but no extra frame can be allocated for it, nor it can be spilled");
+                                    } else {
+                                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(partID);
+                                        spillGroup(groupTupleBuilder, unpinnedPartPicked);
+                                        this.recordsInParts[unpinnedPartPicked]++;
+                                        this.keysInParts[unpinnedPartPicked]++;
+                                    }
+                                }
+                            } else {
+
+                                hashtableFrameTupleAppender.reset(frameManager.getFrame(this.partitionBuffers[partID]),
+                                        true);
+                                if (!hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
+                                        groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(),
+                                        htLookupFrameIndex, htLookupTupleIndex)) {
+                                    throw new HyracksDataException(
+                                            "Failed to insert a group into the hash table: the record is too large.");
+                                }
+                                this.recordsInParts[partID]++;
+                                this.keysInParts[partID]++;
+                            }
+                        }
+                        if (useMiniBloomFilter) {
+                            bloomFilterByte = insertIntoBloomFilter(rawHashValue, bloomFilterByte,
+                                    (htLookupFrameIndex < 0));
+                        }
+
+                        // reset the header reference
+                        setHTSlotPointer(htSlotID, bloomFilterByte, this.partitionBuffers[partID],
+                                hashtableFrameTupleAppender.getTupleCount() - 1);
+                    }
+                }
+            }
         }
     }
 
+    private void getHTSlotPointer(int htSlotID) throws HyracksDataException {
+        int slotsPerFrame = frameSize
+                / (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
+        int slotFrameIndex = htSlotID / slotsPerFrame;
+        int slotTupleOffset = htSlotID % slotsPerFrame
+                * (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
+
+        if (this.htHeaderFrames[slotFrameIndex] < 0) {
+            htLookupFrameIndex = -1;
+            htLookupTupleIndex = -1;
+            return;
+        }
+
+        if (useMiniBloomFilter) {
+            bloomFilterByte = frameManager.getFrame(this.htHeaderFrames[slotFrameIndex]).get(slotTupleOffset);
+        }
+        htLookupFrameIndex = frameManager.getFrame(this.htHeaderFrames[slotFrameIndex]).getInt(
+                slotTupleOffset + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
+        htLookupTupleIndex = frameManager.getFrame(this.htHeaderFrames[slotFrameIndex]).getInt(
+                slotTupleOffset + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE);
+    }
+
     /**
-     * Get the hash partition id for the given raw hash key. The input hash key
-     * should be in the scope of [0, MAX_INT]. And the returned value should be
-     * 0 (for resident partition) or [1, P] (for spilled partitions).
+     * Update the hash table slot
      * 
-     * @param hashkey
+     * @param htSlotID
+     * @param bloomFilterByte
+     * @param frameIndex
+     * @param tupleIndex
+     * @throws HyracksDataException
+     */
+    private void setHTSlotPointer(int htSlotID, byte bloomFilterByte, int frameIndex, int tupleIndex)
+            throws HyracksDataException {
+        int slotsPerFrame = frameSize
+                / (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
+        int slotFrameIndex = htSlotID / slotsPerFrame;
+        int slotTupleOffset = htSlotID % slotsPerFrame
+                * (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
+
+        if (this.htHeaderFrames[slotFrameIndex] < 0) {
+            this.htHeaderFrames[slotFrameIndex] = frameManager.allocateFrame();
+            if (this.htHeaderFrames[slotFrameIndex] < 0) {
+                throw new HyracksDataException("Failed to allocate frame for hash table headers");
+            }
+            frameManager.resetFrame(this.htHeaderFrames[slotFrameIndex]);
+        }
+
+        if (useMiniBloomFilter) {
+            frameManager.getFrame(this.htHeaderFrames[slotFrameIndex]).put(slotTupleOffset, bloomFilterByte);
+        }
+        frameManager.getFrame(this.htHeaderFrames[slotFrameIndex]).putInt(
+                slotTupleOffset + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0), frameIndex);
+        frameManager.getFrame(this.htHeaderFrames[slotFrameIndex]).putInt(
+                slotTupleOffset + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE, tupleIndex);
+    }
+
+    /**
+     * Try to allocate a frame to the given partition. Return true if a new
+     * frame is allocated successfully, otherwise return false.
+     * 
+     * @param partID
      * @return
      * @throws HyracksDataException
      */
-    private int getPartitionID(int rawHashkey) throws HyracksDataException {
-        int partitionID = -1;
-        if (isPartitionPredefined) {
-            // use hash-based partition
-            if (rawHashkey <= maxResidentHashkey) {
-                partitionID = 0;
+    private boolean allocateBufferForPart(int partID) throws HyracksDataException {
+        int newFrameID = frameManager.allocateFrame();
+        while (newFrameID < 0) {
+            // no more free frames from the pool of the frame manager
+            int partIDToSpill = pickPartitionToSpill();
+            if (partIDToSpill >= 0) {
+                if (this.partSpillRunWriters[partIDToSpill] == null) {
+                    this.partSpillRunWriters[partIDToSpill] = new RunFileWriter(
+                            ctx.createManagedWorkspaceFile(HybridHashGrouper.class.getSimpleName()), ctx.getIOManager());
+                    this.partSpillRunWriters[partIDToSpill].open();
+                }
+                flush(this.partSpillRunWriters[partIDToSpill], GrouperFlushOption.FLUSH_FOR_GROUP_STATE, partIDToSpill);
+                if (partIDToSpill != partID) {
+                    newFrameID = frameManager.allocateFrame();
+                } else {
+                    return false;
+                }
             } else {
-                partitionID = (rawHashkey - maxResidentHashkey)
-                        / spilledPartHashkeyRange + 1;
+                break;
             }
+        }
+
+        if (newFrameID >= 0) {
+            frameManager.setNextFrame(newFrameID, this.partitionBuffers[partID]);
+            this.partitionBuffers[partID] = newFrameID;
+            return true;
         } else {
-            // for non-predefined case, always assume the record is in resident
-            // partition, and later if there is no match is found, it is then
-            // assigned to a spilled partition
-            partitionID = 0;
+            return false;
         }
-        if (partitionID == 0) {
-            int residentSubpartID = rawHashkey % numResidentParts;
-            if (residentPartsFlags[residentSubpartID]) {
-                partitionID = rawHashkey % numSpilledParts + 1;
+    }
+
+    private int pickPartitionToSpill() {
+        int partIDToSpill = -1;
+
+        int partsInMem = 0;
+        double minAbsorptionRatio = Integer.MAX_VALUE;
+
+        for (int i = 0; i < this.numParts; i++) {
+            if (this.partitionSpillingFlags[i]) {
+                continue;
+            }
+            partsInMem++;
+            double currentAbsorptionRatio = (this.keysInParts[i] == 0) ? 0 : this.recordsInParts[i]
+                    / this.keysInParts[i];
+            if (currentAbsorptionRatio < minAbsorptionRatio) {
+                minAbsorptionRatio = currentAbsorptionRatio;
+                partIDToSpill = i;
             }
         }
-        return partitionID;
+
+        if (partsInMem == 1 && this.pinLastPartitionAlways) {
+            // Only one partition is left: pin this partition, and use the hash table output buffer for it
+            this.partitionPinFlags[partIDToSpill] = true;
+            this.partitionOutputBuffers[partIDToSpill] = hashtableOutputBuffer;
+            partIDToSpill = -1;
+        }
+        return partIDToSpill;
+    }
+
+    private byte insertIntoBloomFilter(int h, byte bfByte, boolean isInitialize) {
+        byte bfByteAfterInsertion = bfByte;
+        if (isInitialize) {
+            bfByteAfterInsertion = 0;
+        }
+        for (int i = 0; i < HT_BF_PRIME_FUNC_COUNT; i++) {
+            int bitIndex = (int) (h >> (12 * i)) & 0x07;
+            bfByteAfterInsertion = (byte) (bfByteAfterInsertion | (1 << bitIndex));
+        }
+        return bfByteAfterInsertion;
     }
 
     /**
-     * Pick a resident subpartition to spill. If none of the resident
-     * sub-partition can be spilled, return -1;
+     * Spill a record into the given spilled partition.
      * 
+     * @param partID
      * @return
+     * @throws HyracksDataException
      */
-    private int pickResidentSubPartToSpill() {
-        return -1;
+    private int getUnpinnedSpilledPartIDForSpilling(int partID) throws HyracksDataException {
+        if (this.unpinnedSpilledParts.size() == 0) {
+            // right now at most one partition can be pinned
+            int pinnedParts = 0;
+            for (int i = 0; i < this.numParts; i++) {
+                if (this.partitionPinFlags[i]) {
+                    pinnedParts++;
+                }
+            }
+            if (pinnedParts > 1) {
+                throw new HyracksDataException("More than one partition is pinned!");
+            } else {
+                return partID;
+            }
+        }
+        int unpinnedPartIDInList = partID % this.unpinnedSpilledParts.size();
+        return this.unpinnedSpilledParts.get(unpinnedPartIDInList);
     }
 
-    private boolean findMatch(FrameTupleAccessor inputTupleAccessor,
-            int tupleIndex, int rawHashValue, int htSlotID)
+    /**
+     * Spill a group state into the given partition.
+     * 
+     * @param tb
+     * @param spillPartID
+     * @throws HyracksDataException
+     */
+    private void spillGroup(ArrayTupleBuilder tb, int spillPartID) throws HyracksDataException {
+        if (this.partitionOutputBuffers[spillPartID] < 0) {
+            this.partitionOutputBuffers[spillPartID] = frameManager.allocateFrame();
+            spillFrameTupleAppender.reset(frameManager.getFrame(this.partitionOutputBuffers[spillPartID]), true);
+        } else {
+            spillFrameTupleAppender.reset(frameManager.getFrame(this.partitionOutputBuffers[spillPartID]), false);
+        }
+        if (!spillFrameTupleAppender.append(tb.getFieldEndOffsets(), tb.getByteArray(), 0, tb.getSize())) {
+            if (isGenerateRuns) {
+                // the buffer for this spilled partition is full
+                if (this.partSpillRunWriters[spillPartID] == null) {
+                    this.partSpillRunWriters[spillPartID] = new RunFileWriter(
+                            ctx.createManagedWorkspaceFile(HybridHashGrouper.class.getSimpleName()), ctx.getIOManager());
+                    this.partSpillRunWriters[spillPartID].open();
+                }
+                flush(this.partSpillRunWriters[spillPartID], GrouperFlushOption.FLUSH_FOR_GROUP_STATE, spillPartID);
+            } else {
+                flush(outputWriter, GrouperFlushOption.FLUSH_FOR_GROUP_STATE, spillPartID);
+            }
+            spillFrameTupleAppender.reset(frameManager.getFrame(this.partitionOutputBuffers[spillPartID]), true);
+            if (!spillFrameTupleAppender.append(tb.getFieldEndOffsets(), tb.getByteArray(), 0, tb.getSize())) {
+                throw new HyracksDataException("Failed to flush a tuple of a spilling partition");
+            }
+        }
+    }
+
+    private void flush(IFrameWriter writer, IGrouperFlushOption flushOption, int partitionIndex)
             throws HyracksDataException {
-        
+
+        this.outputFrameTupleAppender.reset(frameManager.getFrame(hashtableOutputBuffer), true);
+
+        ByteBuffer bufToFlush = null;
+
+        int workingFrameID = -1, prevFrameID = -1;
+
+        IAggregatorDescriptor aggDesc;
+
+        if (flushOption.getOutputState() == GroupOutputState.GROUP_STATE) {
+            aggDesc = aggregator;
+        } else if (flushOption.getOutputState() == GroupOutputState.RESULT_STATE) {
+            aggDesc = finalMerger;
+        } else {
+            throw new HyracksDataException("Cannot output " + GroupOutputState.RAW_STATE.name()
+                    + " for flushing hybrid hash grouper");
+        }
+
+        if (this.partitionSpillingFlags[partitionIndex]) {
+            workingFrameID = this.partitionOutputBuffers[partitionIndex];
+        } else {
+            workingFrameID = this.partitionBuffers[partitionIndex];
+        }
+
+        bufToFlush = frameManager.getFrame(workingFrameID);
+
+        while (bufToFlush != null) {
+            groupFrameTupleAccessor.reset(bufToFlush);
+            int tupleCount = groupFrameTupleAccessor.getTupleCount();
+            for (int i = 0; i < tupleCount; i++) {
+                outputTupleBuilder.reset();
+                for (int k = 0; k < keyFields.length + decorFields.length; k++) {
+                    outputTupleBuilder.addField(groupFrameTupleAccessor, i, k);
+                }
+                aggDesc.outputFinalResult(outputTupleBuilder, groupFrameTupleAccessor, i, aggState);
+
+                if (!this.outputFrameTupleAppender.append(outputTupleBuilder.getFieldEndOffsets(),
+                        outputTupleBuilder.getByteArray(), 0, outputTupleBuilder.getSize())) {
+
+                    FrameUtils.flushFrame(frameManager.getFrame(hashtableOutputBuffer), writer);
+
+                    outputFrameTupleAppender.reset(frameManager.getFrame(hashtableOutputBuffer), true);
+                    if (!outputFrameTupleAppender.append(outputTupleBuilder.getFieldEndOffsets(),
+                            outputTupleBuilder.getByteArray(), 0, outputTupleBuilder.getSize())) {
+                        throw new HyracksDataException(
+                                "Failed to dump a group from the hash table to a frame: possibly the size of the tuple is too large.");
+                    }
+                }
+            }
+            if (!this.partitionSpillingFlags[partitionIndex]) {
+                prevFrameID = workingFrameID;
+                workingFrameID = frameManager.getNextFrame(workingFrameID);
+                if (workingFrameID >= 0) {
+                    frameManager.recycleFrame(prevFrameID);
+                    this.partitionBuffers[partitionIndex] = workingFrameID;
+                    bufToFlush = frameManager.getFrame(workingFrameID);
+
+                } else {
+                    bufToFlush = null;
+                }
+            } else {
+                bufToFlush = null;
+            }
+        }
+
+        if (this.outputFrameTupleAppender.getTupleCount() > 0) {
+            FrameUtils.flushFrame(frameManager.getFrame(hashtableOutputBuffer), writer);
+            outputFrameTupleAppender.reset(frameManager.getFrame(hashtableOutputBuffer), true);
+        }
+
+        if (!this.partitionSpillingFlags[partitionIndex]) {
+            this.partitionSpillingFlags[partitionIndex] = true;
+            this.partitionOutputBuffers[partitionIndex] = prevFrameID;
+            this.partitionBuffers[partitionIndex] = -1;
+            if (!this.partitionPinFlags[partitionIndex]) {
+                this.unpinnedSpilledParts.add(partitionIndex);
+            }
+        }
+    }
+
+    private boolean findMatch(FrameTupleAccessor inputTupleAccessor, int tupleIndex, int rawHashValue, int htSlotID)
+            throws HyracksDataException {
+        getHTSlotPointer(htSlotID);
+
+        if (htLookupFrameIndex < 0) {
+            return false;
+        }
+
+        // do bloom filter lookup, if bloom filter is enabled.
+        if (useMiniBloomFilter) {
+            if (!lookupBloomFilter(rawHashValue, bloomFilterByte)) {
+                return false;
+            }
+        }
+
+        while (htLookupFrameIndex >= 0) {
+            groupFrameTupleAccessor.reset(frameManager.getFrame(htLookupFrameIndex));
+            if (!sameGroup(inputTupleAccessor, tupleIndex, groupFrameTupleAccessor, htLookupTupleIndex)) {
+                int tupleEndOffset = groupFrameTupleAccessor.getTupleEndOffset(htLookupTupleIndex);
+                htLookupFrameIndex = groupFrameTupleAccessor.getBuffer().getInt(
+                        tupleEndOffset - (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE));
+                htLookupTupleIndex = groupFrameTupleAccessor.getBuffer().getInt(tupleEndOffset - HT_TUPLE_REF_SIZE);
+            } else {
+                return true;
+            }
+        }
+
         // by default: no match is found
         return false;
     }
 
-    /**
-     * Get the bloomfilter byte (if needed), tuple index and frame index from
-     * the hash table for the given slot. Return -1 if the slot is empty.
-     * 
-     * @param htSlotID
-     * @throws HyracksDataException
-     */
-    private void getHTSlotPointers(int htSlotID) throws HyracksDataException {
-        int slotFrameIndex = htSlotID / htSlotsPerFrame;
-        int slotTupleOffset = htSlotID
-                % htSlotsPerFrame
-                * (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE
-                        : 0));
-        ByteBuffer targetHeaderPage = frameManager.getFrame(slotFrameIndex);
-        if (targetHeaderPage == null) {
-            bloomFilterByte = (byte) -1;
-            htLookupFrameIndex = -1;
-            htLookupTupleIndex = -1;
-        } else {
-            if (useMiniBloomFilter) {
-                bloomFilterByte = targetHeaderPage.get(slotTupleOffset);
+    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx, FrameTupleAccessor a2, int t2Idx) {
+        for (int i = 0; i < comparators.length; ++i) {
+            int fIdx = keyFields[i];
+            int s1 = a1.getTupleStartOffset(t1Idx) + a1.getFieldSlotsLength() + a1.getFieldStartOffset(t1Idx, fIdx);
+            int l1 = a1.getFieldLength(t1Idx, fIdx);
+            int s2 = a2.getTupleStartOffset(t2Idx) + a2.getFieldSlotsLength() + a2.getFieldStartOffset(t2Idx, i);
+            int l2 = a2.getFieldLength(t2Idx, i);
+            if (comparators[i].compare(a1.getBuffer().array(), s1, l1, a2.getBuffer().array(), s2, l2) != 0) {
+                return false;
             }
-            htLookupFrameIndex = targetHeaderPage.getInt(slotTupleOffset
-                    + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
-            htLookupTupleIndex = targetHeaderPage.getInt(slotTupleOffset
-                    + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0)
-                    + HT_FRAME_REF_SIZE);
         }
+        return true;
     }
 
-    /**
-     * Get the resident partition containing the given hash key. Return -1 if
-     * the given hash key should be spilled (for both spilled partitions and the
-     * spilled resident partitions)
-     * 
-     * @param rawHashkey
-     * @return
-     * @throws HyracksDataException
-     */
-    private int getResidentPartitionID(int rawHashkey)
-            throws HyracksDataException {
-
-        return -1;
+    private boolean lookupBloomFilter(int h, byte bfByte) {
+        for (int i = 0; i < HT_BF_PRIME_FUNC_COUNT; i++) {
+            int bitIndex = (int) (h >> (12 * i)) & 0x07;
+            if (!((bfByte & (1L << bitIndex)) != 0)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /*
@@ -729,6 +944,41 @@ public class DynamicHybridHashGrouper implements IFrameWriter {
      */
     @Override
     public void close() throws HyracksDataException {
+        // TODO Auto-generated method stub
+
+    }
+
+    @Override
+    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException {
+
+    }
+
+    @Override
+    public void wrapup() throws HyracksDataException {
+        for (int i = 0; i < numParts; i++) {
+            if (this.partitionSpillingFlags[i]) {
+                // simply flush the output buffer for the partition
+                if (!this.partitionPinFlags[i]) {
+                    if (this.partSpillRunWriters[i] == null) {
+                        this.partSpillRunWriters[i] = new RunFileWriter(
+                                ctx.createManagedWorkspaceFile(HybridHashGrouper.class.getSimpleName()),
+                                ctx.getIOManager());
+                        this.partSpillRunWriters[i].open();
+                    }
+                    flush(this.partSpillRunWriters[i], GrouperFlushOption.FLUSH_FOR_GROUP_STATE, i);
+                }
+            } else {
+                flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE, i);
+            }
+            if (this.partSpillRunWriters[i] != null) {
+                runReaders.add(this.partSpillRunWriters[i].createReader());
+                this.partSpillRunWriters[i].close();
+            }
+        }
+    }
+
+    @Override
+    protected void dumpAndCleanDebugCounters() {
         // TODO Auto-generated method stub
 
     }

@@ -237,6 +237,19 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, comparatorFactories, writer);
                         break;
+                    case DYNAMIC_HYBRID_HASH_MAP:
+                        grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
+                                recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
+                                1.0, firstNormalizerFactory, comparatorFactories, hashFamilies,
+                                aggregatorFactory, partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc,
+                                levelSeed, writer, true, 1, false, true, false);
+                        break;
+                    case DYNAMIC_HYBRID_HASH_REDUCE:
+                        grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
+                                recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
+                                firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
+                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer);
+                        break;
                     case SORT_GROUP_MERGE_GROUP:
                     default:
                         grouper = new SortGroupMergeGrouper(ctx, keyFields, decorFields, framesLimit,
@@ -273,6 +286,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                     case HASH_GROUP:
                     case SIMPLE_HYBRID_HASH:
                     case PRECLUSTER:
+                    case DYNAMIC_HYBRID_HASH_MAP:
                         ((AbstractHistogramPushBasedGrouper) grouper).wrapup();
                         break;
                     default:

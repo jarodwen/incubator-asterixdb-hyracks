@@ -68,8 +68,7 @@ public class FrameMemManager {
         // reset the frame content, if any
         if (newFrameIdx >= 0 && frames[newFrameIdx] != null) {
             frames[newFrameIdx].clear();
-            frames[newFrameIdx].putInt(frames[newFrameIdx].array().length
-                    - INT_SIZE, 0);
+            frames[newFrameIdx].putInt(frames[newFrameIdx].array().length - INT_SIZE, 0);
         }
         if (newFrameIdx >= 0)
             framesAvailable[newFrameIdx] = false;
@@ -172,8 +171,7 @@ public class FrameMemManager {
         // reset the frame content, if any
         if (frames[frameIdx] != null) {
             frames[frameIdx].clear();
-            frames[frameIdx].putInt(frames[frameIdx].array().length - INT_SIZE,
-                    -1);
+            frames[frameIdx].putInt(frames[frameIdx].array().length - INT_SIZE, 0);
         }
     }
 

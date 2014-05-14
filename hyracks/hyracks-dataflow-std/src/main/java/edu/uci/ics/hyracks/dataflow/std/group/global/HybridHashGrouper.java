@@ -113,53 +113,41 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
     private List<Integer> recordsInRuns;
 
-    private static final Logger LOGGER = Logger
-            .getLogger(HybridHashGrouper.class.getSimpleName());
+    private static final Logger LOGGER = Logger.getLogger(HybridHashGrouper.class.getSimpleName());
 
-    private long debugBloomFilterUpdateCounter = 0,
-            debugBloomFilterLookupCounter = 0, debugOptionalHashHits = 0,
-            debugOptionalHashMisses = 0, debugOptionalCPUCompareHit = 0,
-            debugOptionalCPUCompareMiss = 0, debugRequiredCPU = 0,
-            debugOptionalSortCPUCompare = 0, debugOptionalSortCPUCopy = 0,
+    private long debugBloomFilterUpdateCounter = 0, debugBloomFilterLookupCounter = 0, debugOptionalHashHits = 0,
+            debugOptionalHashMisses = 0, debugOptionalCPUCompareHit = 0, debugOptionalCPUCompareMiss = 0,
+            debugRequiredCPU = 0, debugOptionalSortCPUCompare = 0, debugOptionalSortCPUCopy = 0,
             debugOptionalIOStreamed = 0, debugOptionalIODumped = 0;
     private double debugOptionalMaxHashtableFillRatio = 0;
-    private long debugTempCPUCounter = 0, debugTempGroupsInHashtable = 0,
-            debugTempUsedSlots = 0;
-    private long profileCPU, profileIOInNetwork, profileIOInDisk,
-            profileIOOutDisk, profileIOOutNetwork, profileOutputRecords;
+    private long debugTempCPUCounter = 0, debugTempGroupsInHashtable = 0, debugTempUsedSlots = 0;
+    private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork,
+            profileOutputRecords;
     private long debugBloomFilterSucc = 0, debugBloomFilterFail = 0;
 
-    public HybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields,
-            int[] decorFields, int framesLimit,
-            IAggregatorDescriptorFactory aggregatorFactory,
-            IAggregatorDescriptorFactory mergerFactory,
-            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc,
-            boolean enableHistorgram, IFrameWriter outputWriter,
-            boolean isGenerateRuns, int tableSize,
-            IBinaryComparatorFactory[] comparatorFactories,
-            IBinaryHashFunctionFactory[] hashFunctionFactories, int partitions,
-            boolean useBloomFilter) throws HyracksDataException {
-        super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
-                mergerFactory, inRecDesc, outRecDesc, enableHistorgram,
-                outputWriter, isGenerateRuns);
+    public HybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
+            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory mergerFactory,
+            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc, boolean enableHistorgram,
+            IFrameWriter outputWriter, boolean isGenerateRuns, int tableSize,
+            IBinaryComparatorFactory[] comparatorFactories, IBinaryHashFunctionFactory[] hashFunctionFactories,
+            int partitions, boolean useBloomFilter) throws HyracksDataException {
+        super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, mergerFactory, inRecDesc, outRecDesc,
+                enableHistorgram, outputWriter, isGenerateRuns);
 
         this.tableSize = tableSize;
 
         this.comparators = new IBinaryComparator[comparatorFactories.length];
         for (int i = 0; i < this.comparators.length; i++) {
-            this.comparators[i] = comparatorFactories[i]
-                    .createBinaryComparator();
+            this.comparators[i] = comparatorFactories[i].createBinaryComparator();
         }
-        this.tuplePartitionComputer = new FieldHashPartitionComputerFactory(
-                keyFields, hashFunctionFactories).createPartitioner();
+        this.tuplePartitionComputer = new FieldHashPartitionComputerFactory(keyFields, hashFunctionFactories)
+                .createPartitioner();
 
         int[] storedKeys = new int[keyFields.length];
 
-        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc,
-                outRecDesc, keyFields, storedKeys, null);
+        this.aggregator = aggregatorFactory.createAggregator(ctx, inRecDesc, outRecDesc, keyFields, storedKeys, null);
         this.aggState = aggregator.createAggregateStates();
-        this.merger = mergerFactory.createAggregator(ctx, outRecDesc,
-                outRecDesc, storedKeys, storedKeys, null);
+        this.merger = mergerFactory.createAggregator(ctx, outRecDesc, outRecDesc, storedKeys, storedKeys, null);
 
         this.useBloomFilter = useBloomFilter;
 
@@ -177,14 +165,12 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     public void open() throws HyracksDataException {
 
         // initialize the hash table
-        int headerFramesCount = (int) (Math
-                .ceil((double) tableSize
-                        * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE
-                                : 0)) / frameSize));
+        int headerFramesCount = (int) (Math.ceil((double) tableSize
+                * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE : 0)) / frameSize));
 
         if (framesLimit < headerFramesCount + 2) {
-            throw new HyracksDataException("Not enough frame (" + framesLimit
-                    + ") for a hash table with " + tableSize + " slots.");
+            throw new HyracksDataException("Not enough frame (" + framesLimit + ") for a hash table with " + tableSize
+                    + " slots.");
         }
 
         this.headers = new ByteBuffer[headerFramesCount];
@@ -193,14 +179,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         // - list storage area
 
         if (framesLimit - headers.length - partitions - 1 <= 0) {
-            throw new HyracksDataException(
-                    "Note enough memory for the hybrid hash algorithm: "
-                            + headers.length + " headers and " + partitions
-                            + " partitions.");
+            throw new HyracksDataException("Note enough memory for the hybrid hash algorithm: " + headers.length
+                    + " headers and " + partitions + " partitions.");
         }
 
-        this.contents = new ByteBuffer[framesLimit - headers.length
-                - partitions - 1];
+        this.contents = new ByteBuffer[framesLimit - headers.length - partitions - 1];
         for (int i = 0; i < contents.length; i++) {
             this.contents[i] = ctx.allocateFrame();
         }
@@ -209,17 +192,15 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         this.spillingPartitionRunWriters = new RunFileWriter[partitions];
 
         // initialize the accessors and appenders
-        this.inputFrameTupleAccessor = new FrameTupleAccessor(frameSize,
-                inRecDesc);
+        this.inputFrameTupleAccessor = new FrameTupleAccessor(frameSize, inRecDesc);
         this.groupFrameAccessor = new FrameTupleAccessor(frameSize, outRecDesc);
 
-        this.groupTupleBuilder = new ArrayTupleBuilder(
-                outRecDesc.getFieldCount());
+        this.groupTupleBuilder = new ArrayTupleBuilder(outRecDesc.getFieldCount());
 
-        this.hashtableFrameTupleAppender = new HashTableFrameTupleAppender(
-                frameSize, LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE);
+        this.hashtableFrameTupleAppender = new HashTableFrameTupleAppender(frameSize, LIST_FRAME_REF_SIZE
+                + LIST_TUPLE_REF_SIZE);
 
-        // reset the hash table content frame 
+        // reset the hash table content frame
         this.currentWorkingFrame = 0;
 
         // reset the lookup reference
@@ -237,8 +218,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         this.spillFrameTupleAppender = new FrameTupleAppender(frameSize);
 
-        this.outputTupleBuilder = new ArrayTupleBuilder(
-                outRecDesc.getFieldCount());
+        this.outputTupleBuilder = new ArrayTupleBuilder(outRecDesc.getFieldCount());
 
         this.outputBuffer = ctx.allocateFrame();
         this.outputAppender = new FrameTupleAppender(frameSize);
@@ -272,8 +252,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         profileIOInNetwork++;
 
-        this.debugCounters.updateOptionalCommonCounter(
-                OptionalCommonCounters.FRAME_INPUT, 1);
+        this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, 1);
 
         // reset the processed tuple count
         this.processedTuple = 0;
@@ -282,24 +261,19 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         int tupleCount = inputFrameTupleAccessor.getTupleCount();
 
-        this.debugCounters.updateOptionalCommonCounter(
-                OptionalCommonCounters.RECORD_INPUT, tupleCount);
+        this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT, tupleCount);
 
         for (int tupleIndex = 0; tupleIndex < tupleCount; tupleIndex++) {
-            int rawHashValue = tuplePartitionComputer.partition(
-                    inputFrameTupleAccessor, tupleIndex, Integer.MAX_VALUE);
+            int rawHashValue = tuplePartitionComputer.partition(inputFrameTupleAccessor, tupleIndex, Integer.MAX_VALUE);
             int h = rawHashValue % tableSize;
 
             if (findMatch(inputFrameTupleAccessor, tupleIndex, rawHashValue, h)) {
                 // match found: do aggregation
                 this.groupFrameAccessor.reset(contents[lookupFrameIndex]);
-                int tupleStartOffset = this.groupFrameAccessor
-                        .getTupleStartOffset(lookupTupleIndex);
-                int tupleEndOffset = this.groupFrameAccessor
-                        .getTupleEndOffset(lookupTupleIndex);
-                this.aggregator.aggregate(inputFrameTupleAccessor, tupleIndex,
-                        contents[lookupFrameIndex].array(), tupleStartOffset,
-                        tupleEndOffset - tupleStartOffset, aggState);
+                int tupleStartOffset = this.groupFrameAccessor.getTupleStartOffset(lookupTupleIndex);
+                int tupleEndOffset = this.groupFrameAccessor.getTupleEndOffset(lookupTupleIndex);
+                this.aggregator.aggregate(inputFrameTupleAccessor, tupleIndex, contents[lookupFrameIndex].array(),
+                        tupleStartOffset, tupleEndOffset - tupleStartOffset, aggState);
 
                 rawRecordsInResidentPartition++;
             } else {
@@ -308,17 +282,14 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 this.groupTupleBuilder.reset();
 
                 for (int i : keyFields) {
-                    groupTupleBuilder.addField(inputFrameTupleAccessor,
-                            tupleIndex, i);
+                    groupTupleBuilder.addField(inputFrameTupleAccessor, tupleIndex, i);
                 }
 
                 for (int i : decorFields) {
-                    groupTupleBuilder.addField(inputFrameTupleAccessor,
-                            tupleIndex, i);
+                    groupTupleBuilder.addField(inputFrameTupleAccessor, tupleIndex, i);
                 }
 
-                aggregator.init(groupTupleBuilder, inputFrameTupleAccessor,
-                        tupleIndex, aggState);
+                aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
 
                 if (isHashTableFull) {
                     spillGroup(groupTupleBuilder, h);
@@ -332,22 +303,17 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                     debugTempUsedSlots++;
                 }
 
-                hashtableFrameTupleAppender.reset(
-                        contents[currentWorkingFrame], false);
-                if (!hashtableFrameTupleAppender.append(
-                        groupTupleBuilder.getFieldEndOffsets(),
-                        groupTupleBuilder.getByteArray(), 0,
-                        groupTupleBuilder.getSize(), lookupFrameIndex,
+                hashtableFrameTupleAppender.reset(contents[currentWorkingFrame], false);
+                if (!hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
+                        groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(), lookupFrameIndex,
                         lookupTupleIndex)) {
                     currentWorkingFrame++;
                     if (currentWorkingFrame >= contents.length) {
                         // hash table is full
                         isHashTableFull = true;
 
-                        debugOptionalMaxHashtableFillRatio = Math
-                                .max(debugOptionalMaxHashtableFillRatio,
-                                        debugTempGroupsInHashtable
-                                                / debugTempUsedSlots);
+                        debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio,
+                                debugTempGroupsInHashtable / debugTempUsedSlots);
 
                         if (debugOptionalMaxHashtableFillRatio > 2) {
                             System.out.println("Bad Hash Table!");
@@ -359,12 +325,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                     if (contents[currentWorkingFrame] == null) {
                         contents[currentWorkingFrame] = ctx.allocateFrame();
                     }
-                    hashtableFrameTupleAppender.reset(
-                            contents[currentWorkingFrame], true);
-                    if (!hashtableFrameTupleAppender.append(
-                            groupTupleBuilder.getFieldEndOffsets(),
-                            groupTupleBuilder.getByteArray(), 0,
-                            groupTupleBuilder.getSize(), lookupFrameIndex,
+                    hashtableFrameTupleAppender.reset(contents[currentWorkingFrame], true);
+                    if (!hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
+                            groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(), lookupFrameIndex,
                             lookupTupleIndex)) {
                         throw new HyracksDataException(
                                 "Failed to insert a group into the hash table: the record is too large.");
@@ -372,13 +335,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 }
 
                 if (useBloomFilter) {
-                    bloomFilterByte = insertIntoBloomFilter(rawHashValue,
-                            bloomFilterByte, (lookupFrameIndex < 0));
+                    bloomFilterByte = insertIntoBloomFilter(rawHashValue, bloomFilterByte, (lookupFrameIndex < 0));
                 }
 
                 // reset the header reference
-                setSlotPointer(h, bloomFilterByte, currentWorkingFrame,
-                        hashtableFrameTupleAppender.getTupleCount() - 1);
+                setSlotPointer(h, bloomFilterByte, currentWorkingFrame, hashtableFrameTupleAppender.getTupleCount() - 1);
 
                 groupsInResidentPartition++;
                 rawRecordsInResidentPartition++;
@@ -390,62 +351,47 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    private void spillGroup(ArrayTupleBuilder tb, int hashValue)
-            throws HyracksDataException {
+    private void spillGroup(ArrayTupleBuilder tb, int hashValue) throws HyracksDataException {
         int partitionToSpill = hashValue % partitions;
         if (spilledPartitionBuffers[partitionToSpill] == null) {
             spilledPartitionBuffers[partitionToSpill] = ctx.allocateFrame();
-            spillFrameTupleAppender.reset(
-                    spilledPartitionBuffers[partitionToSpill], true);
+            spillFrameTupleAppender.reset(spilledPartitionBuffers[partitionToSpill], true);
         }
-        spillFrameTupleAppender.reset(
-                spilledPartitionBuffers[partitionToSpill], false);
-        if (!spillFrameTupleAppender.append(tb.getFieldEndOffsets(),
-                tb.getByteArray(), 0, tb.getSize())) {
+        spillFrameTupleAppender.reset(spilledPartitionBuffers[partitionToSpill], false);
+        if (!spillFrameTupleAppender.append(tb.getFieldEndOffsets(), tb.getByteArray(), 0, tb.getSize())) {
             if (isGenerateRuns) {
                 // the buffer for this spilled partition is full
                 if (spillingPartitionRunWriters[partitionToSpill] == null) {
                     spillingPartitionRunWriters[partitionToSpill] = new RunFileWriter(
-                            ctx.createManagedWorkspaceFile(HybridHashGrouper.class
-                                    .getSimpleName()), ctx.getIOManager());
+                            ctx.createManagedWorkspaceFile(HybridHashGrouper.class.getSimpleName()), ctx.getIOManager());
                     spillingPartitionRunWriters[partitionToSpill].open();
-                    this.debugCounters.updateOptionalCommonCounter(
-                            OptionalCommonCounters.RUN_GENERATED, 1);
+                    this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RUN_GENERATED, 1);
                 }
-                flush(spillingPartitionRunWriters[partitionToSpill],
-                        GrouperFlushOption.FLUSH_FOR_GROUP_STATE,
+                flush(spillingPartitionRunWriters[partitionToSpill], GrouperFlushOption.FLUSH_FOR_GROUP_STATE,
                         partitionToSpill);
             } else {
-                flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE,
-                        partitionToSpill);
+                flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE, partitionToSpill);
             }
-            spillFrameTupleAppender.reset(
-                    spilledPartitionBuffers[partitionToSpill], true);
-            if (!spillFrameTupleAppender.append(tb.getFieldEndOffsets(),
-                    tb.getByteArray(), 0, tb.getSize())) {
-                throw new HyracksDataException(
-                        "Failed to flush a tuple of a spilling partition");
+            spillFrameTupleAppender.reset(spilledPartitionBuffers[partitionToSpill], true);
+            if (!spillFrameTupleAppender.append(tb.getFieldEndOffsets(), tb.getByteArray(), 0, tb.getSize())) {
+                throw new HyracksDataException("Failed to flush a tuple of a spilling partition");
             }
         }
         rawRecordsInSpillingPartitions[partitionToSpill]++;
     }
 
-    private void setSlotPointer(int h, byte bfByte, int contentFrameIndex,
-            int contentTupleIndex) throws HyracksDataException {
+    private void setSlotPointer(int h, byte bfByte, int contentFrameIndex, int contentTupleIndex)
+            throws HyracksDataException {
         int slotsPerFrame = frameSize
-                / (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE
-                        : 0));
+                / (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE : 0));
         int slotFrameIndex = h / slotsPerFrame;
-        int slotTupleOffset = h
-                % slotsPerFrame
-                * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE
-                        : 0));
+        int slotTupleOffset = h % slotsPerFrame
+                * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE : 0));
 
         if (headers[slotFrameIndex] == null) {
             headers[slotFrameIndex] = ctx.allocateFrame();
             headers[slotFrameIndex].position(0);
-            while (headers[slotFrameIndex].position()
-                    + (useBloomFilter ? 9 : 8) < frameSize) {
+            while (headers[slotFrameIndex].position() + (useBloomFilter ? 9 : 8) < frameSize) {
                 if (useBloomFilter) {
                     headers[slotFrameIndex].put((byte) 0);
                 }
@@ -457,22 +403,17 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         if (useBloomFilter) {
             headers[slotFrameIndex].put(slotTupleOffset, bfByte);
         }
-        headers[slotFrameIndex].putInt(slotTupleOffset
-                + (useBloomFilter ? BLOOM_FILTER_SIZE : 0), contentFrameIndex);
-        headers[slotFrameIndex].putInt(slotTupleOffset
-                + (useBloomFilter ? BLOOM_FILTER_SIZE : 0) + INT_SIZE,
+        headers[slotFrameIndex].putInt(slotTupleOffset + (useBloomFilter ? BLOOM_FILTER_SIZE : 0), contentFrameIndex);
+        headers[slotFrameIndex].putInt(slotTupleOffset + (useBloomFilter ? BLOOM_FILTER_SIZE : 0) + INT_SIZE,
                 contentTupleIndex);
     }
 
     private void getSlotPointer(int h) {
         int slotsPerFrame = frameSize
-                / (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE
-                        : 0));
+                / (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE : 0));
         int slotFrameIndex = h / slotsPerFrame;
-        int slotTupleOffset = h
-                % slotsPerFrame
-                * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE
-                        : 0));
+        int slotTupleOffset = h % slotsPerFrame
+                * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE + (useBloomFilter ? BLOOM_FILTER_SIZE : 0));
 
         if (headers[slotFrameIndex] == null) {
             lookupFrameIndex = -1;
@@ -483,10 +424,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         if (useBloomFilter) {
             bloomFilterByte = headers[slotFrameIndex].get(slotTupleOffset);
         }
-        lookupFrameIndex = headers[slotFrameIndex].getInt(slotTupleOffset
-                + (useBloomFilter ? BLOOM_FILTER_SIZE : 0));
-        lookupTupleIndex = headers[slotFrameIndex].getInt(slotTupleOffset
-                + (useBloomFilter ? BLOOM_FILTER_SIZE : 0) + INT_SIZE);
+        lookupFrameIndex = headers[slotFrameIndex].getInt(slotTupleOffset + (useBloomFilter ? BLOOM_FILTER_SIZE : 0));
+        lookupTupleIndex = headers[slotFrameIndex].getInt(slotTupleOffset + (useBloomFilter ? BLOOM_FILTER_SIZE : 0)
+                + INT_SIZE);
     }
 
     private byte insertIntoBloomFilter(int h, byte bfByte, boolean isInitialize) {
@@ -516,8 +456,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         return true;
     }
 
-    private boolean findMatch(FrameTupleAccessor accessor, int tupleIndex,
-            int rawHashValue, int tableHashValue) throws HyracksDataException {
+    private boolean findMatch(FrameTupleAccessor accessor, int tupleIndex, int rawHashValue, int tableHashValue)
+            throws HyracksDataException {
         getSlotPointer(tableHashValue);
 
         if (lookupFrameIndex < 0) {
@@ -538,15 +478,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         while (lookupFrameIndex >= 0) {
             groupFrameAccessor.reset(contents[lookupFrameIndex]);
-            if (!sameGroup(accessor, tupleIndex, groupFrameAccessor,
-                    lookupTupleIndex)) {
-                int tupleEndOffset = groupFrameAccessor
-                        .getTupleEndOffset(lookupTupleIndex);
+            if (!sameGroup(accessor, tupleIndex, groupFrameAccessor, lookupTupleIndex)) {
+                int tupleEndOffset = groupFrameAccessor.getTupleEndOffset(lookupTupleIndex);
                 lookupFrameIndex = groupFrameAccessor.getBuffer().getInt(
-                        tupleEndOffset
-                                - (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE));
-                lookupTupleIndex = groupFrameAccessor.getBuffer().getInt(
-                        tupleEndOffset - LIST_TUPLE_REF_SIZE);
+                        tupleEndOffset - (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE));
+                lookupTupleIndex = groupFrameAccessor.getBuffer().getInt(tupleEndOffset - LIST_TUPLE_REF_SIZE);
             } else {
                 debugOptionalCPUCompareHit += debugTempCPUCounter;
                 debugOptionalHashHits++;
@@ -561,29 +497,25 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         return false;
     }
 
-    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx,
-            FrameTupleAccessor a2, int t2Idx) {
+    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx, FrameTupleAccessor a2, int t2Idx) {
         debugTempCPUCounter++;
         debugRequiredCPU++;
         profileCPU++;
         for (int i = 0; i < comparators.length; ++i) {
             int fIdx = keyFields[i];
-            int s1 = a1.getTupleStartOffset(t1Idx) + a1.getFieldSlotsLength()
-                    + a1.getFieldStartOffset(t1Idx, fIdx);
+            int s1 = a1.getTupleStartOffset(t1Idx) + a1.getFieldSlotsLength() + a1.getFieldStartOffset(t1Idx, fIdx);
             int l1 = a1.getFieldLength(t1Idx, fIdx);
-            int s2 = a2.getTupleStartOffset(t2Idx) + a2.getFieldSlotsLength()
-                    + a2.getFieldStartOffset(t2Idx, i);
+            int s2 = a2.getTupleStartOffset(t2Idx) + a2.getFieldSlotsLength() + a2.getFieldStartOffset(t2Idx, i);
             int l2 = a2.getFieldLength(t2Idx, i);
-            if (comparators[i].compare(a1.getBuffer().array(), s1, l1, a2
-                    .getBuffer().array(), s2, l2) != 0) {
+            if (comparators[i].compare(a1.getBuffer().array(), s1, l1, a2.getBuffer().array(), s2, l2) != 0) {
                 return false;
             }
         }
         return true;
     }
 
-    private void flush(IFrameWriter writer, IGrouperFlushOption flushOption,
-            int partitionIndex) throws HyracksDataException {
+    private void flush(IFrameWriter writer, IGrouperFlushOption flushOption, int partitionIndex)
+            throws HyracksDataException {
 
         outputAppender.reset(outputBuffer, true);
 
@@ -598,8 +530,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         } else if (flushOption.getOutputState() == GroupOutputState.RESULT_STATE) {
             aggDesc = merger;
         } else {
-            throw new HyracksDataException("Cannot output "
-                    + GroupOutputState.RAW_STATE.name()
+            throw new HyracksDataException("Cannot output " + GroupOutputState.RAW_STATE.name()
                     + " for flushing hybrid hash grouper");
         }
 
@@ -617,15 +548,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 for (int k = 0; k < keyFields.length + decorFields.length; k++) {
                     outputTupleBuilder.addField(groupFrameAccessor, i, k);
                 }
-                aggDesc.outputFinalResult(outputTupleBuilder,
-                        groupFrameAccessor, i, aggState);
+                aggDesc.outputFinalResult(outputTupleBuilder, groupFrameAccessor, i, aggState);
 
-                if (!outputAppender.append(
-                        outputTupleBuilder.getFieldEndOffsets(),
-                        outputTupleBuilder.getByteArray(), 0,
-                        outputTupleBuilder.getSize())) {
-                    this.debugCounters.updateOptionalCommonCounter(
-                            OptionalCommonCounters.FRAME_OUTPUT, 1);
+                if (!outputAppender.append(outputTupleBuilder.getFieldEndOffsets(), outputTupleBuilder.getByteArray(),
+                        0, outputTupleBuilder.getSize())) {
+                    this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
                     FrameUtils.flushFrame(outputBuffer, writer);
 
                     if (isGenerateRuns) {
@@ -634,8 +561,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                         profileIOOutNetwork++;
                     }
 
-                    this.debugCounters.updateOptionalCommonCounter(
-                            OptionalCommonCounters.RECORD_OUTPUT,
+                    this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                             outputAppender.getTupleCount());
                     if (flushOption == GrouperFlushOption.FLUSH_FOR_GROUP_STATE) {
                         debugOptionalIODumped++;
@@ -643,10 +569,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                         debugOptionalIOStreamed++;
                     }
                     outputAppender.reset(outputBuffer, true);
-                    if (!outputAppender.append(
-                            outputTupleBuilder.getFieldEndOffsets(),
-                            outputTupleBuilder.getByteArray(), 0,
-                            outputTupleBuilder.getSize())) {
+                    if (!outputAppender.append(outputTupleBuilder.getFieldEndOffsets(),
+                            outputTupleBuilder.getByteArray(), 0, outputTupleBuilder.getSize())) {
                         throw new HyracksDataException(
                                 "Failed to dump a group from the hash table to a frame: possibly the size of the tuple is too large.");
                     }
@@ -654,8 +578,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
             }
             if (partitionIndex < 0) {
                 hashtableFrameIndex++;
-                if (contents.length > hashtableFrameIndex
-                        && currentWorkingFrame >= hashtableFrameIndex) {
+                if (contents.length > hashtableFrameIndex && currentWorkingFrame >= hashtableFrameIndex) {
                     bufToFlush = contents[hashtableFrameIndex];
                 } else {
                     bufToFlush = null;
@@ -666,16 +589,14 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         }
 
         if (outputAppender.getTupleCount() > 0) {
-            this.debugCounters.updateOptionalCommonCounter(
-                    OptionalCommonCounters.FRAME_OUTPUT, 1);
+            this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
             FrameUtils.flushFrame(outputBuffer, writer);
             if (isGenerateRuns && partitionIndex >= 0) {
                 profileIOOutDisk++;
             } else {
                 profileIOOutNetwork++;
             }
-            this.debugCounters.updateOptionalCommonCounter(
-                    OptionalCommonCounters.RECORD_OUTPUT,
+            this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                     outputAppender.getTupleCount());
             if (flushOption == GrouperFlushOption.FLUSH_FOR_GROUP_STATE) {
                 debugOptionalIODumped++;
@@ -707,20 +628,16 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
             if (isGenerateRuns) {
                 if (spillingPartitionRunWriters[i] == null) {
                     spillingPartitionRunWriters[i] = new RunFileWriter(
-                            ctx.createManagedWorkspaceFile(HybridHashGrouper.class
-                                    .getSimpleName()), ctx.getIOManager());
+                            ctx.createManagedWorkspaceFile(HybridHashGrouper.class.getSimpleName()), ctx.getIOManager());
                     spillingPartitionRunWriters[i].open();
-                    this.debugCounters.updateOptionalCommonCounter(
-                            OptionalCommonCounters.RUN_GENERATED, 1);
+                    this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RUN_GENERATED, 1);
                 }
-                flush(spillingPartitionRunWriters[i],
-                        GrouperFlushOption.FLUSH_FOR_GROUP_STATE, i);
+                flush(spillingPartitionRunWriters[i], GrouperFlushOption.FLUSH_FOR_GROUP_STATE, i);
                 runReaders.add(spillingPartitionRunWriters[i].createReader());
                 recordsInRuns.add(rawRecordsInSpillingPartitions[i]);
                 spillingPartitionRunWriters[i].close();
             } else {
-                flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE,
-                        i);
+                flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE, i);
             }
         }
 
@@ -731,8 +648,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     }
 
     @Override
-    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption)
-            throws HyracksDataException {
+    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException {
     }
 
     /*
@@ -755,7 +671,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         this.isHashTableFull = false;
 
-        // reset the hash table content frame 
+        // reset the hash table content frame
         this.currentWorkingFrame = 0;
 
         // reset the lookup reference
@@ -828,62 +744,41 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
     protected void dumpAndCleanDebugCounters() {
 
-        this.debugCounters.updateRequiredCounter(RequiredCounters.CPU,
-                debugRequiredCPU);
-        this.debugCounters.updateRequiredCounter(RequiredCounters.IO_OUT_DISK,
-                debugOptionalIODumped);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.CPU, debugRequiredCPU);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IO_OUT_DISK, debugOptionalIODumped);
 
-        this.debugCounters.updateOptionalCustomizedCounter(".io.streamed",
-                debugOptionalIOStreamed);
-        this.debugCounters.updateOptionalCustomizedCounter(".io.dumped",
-                debugOptionalIODumped);
+        this.debugCounters.updateOptionalCustomizedCounter(".io.streamed", debugOptionalIOStreamed);
+        this.debugCounters.updateOptionalCustomizedCounter(".io.dumped", debugOptionalIODumped);
 
-        this.debugCounters.updateOptionalCustomizedCounter(
-                ".hash.bloomfilter.update", debugBloomFilterUpdateCounter);
-        this.debugCounters.updateOptionalCustomizedCounter(
-                ".hash.bloomfilter.lookup", debugBloomFilterLookupCounter);
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.bloomfilter.update", debugBloomFilterUpdateCounter);
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.bloomfilter.lookup", debugBloomFilterLookupCounter);
 
-        this.debugCounters.updateOptionalCustomizedCounter(
-                ".hash.groupsInTable", debugTempGroupsInHashtable);
-        this.debugCounters.updateOptionalCustomizedCounter(".hash.slotsUsed",
-                debugTempUsedSlots);
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.groupsInTable", debugTempGroupsInHashtable);
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.slotsUsed", debugTempUsedSlots);
 
-        this.debugCounters.updateOptionalCustomizedCounter(".bloomfilter.succ",
-                debugBloomFilterSucc);
-        this.debugCounters.updateOptionalCustomizedCounter(".bloomfilter.fail",
-                debugBloomFilterFail);
+        this.debugCounters.updateOptionalCustomizedCounter(".bloomfilter.succ", debugBloomFilterSucc);
+        this.debugCounters.updateOptionalCustomizedCounter(".bloomfilter.fail", debugBloomFilterFail);
 
-        debugOptionalMaxHashtableFillRatio = Math.max(
-                debugOptionalMaxHashtableFillRatio,
-                (double) debugTempGroupsInHashtable
-                        / (double) debugTempUsedSlots);
+        debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio,
+                (double) debugTempGroupsInHashtable / (double) debugTempUsedSlots);
 
         if (debugOptionalMaxHashtableFillRatio > 2) {
             System.out.println("Bad Hash Table!");
         }
 
-        this.debugCounters.updateOptionalCustomizedCounter(
-                ".hash.maxFillRatio",
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.maxFillRatio",
                 ((long) debugOptionalMaxHashtableFillRatio * 100));
 
-        this.debugCounters.updateOptionalSortCounter(
-                OptionalSortCounters.CPU_COMPARE, debugOptionalSortCPUCompare);
-        this.debugCounters.updateOptionalSortCounter(
-                OptionalSortCounters.CPU_COPY, debugOptionalSortCPUCopy);
+        this.debugCounters.updateOptionalSortCounter(OptionalSortCounters.CPU_COMPARE, debugOptionalSortCPUCompare);
+        this.debugCounters.updateOptionalSortCounter(OptionalSortCounters.CPU_COPY, debugOptionalSortCPUCopy);
 
-        this.debugCounters.updateOptionalHashCounter(
-                OptionalHashCounters.CPU_COMPARE_HIT,
-                debugOptionalCPUCompareHit);
-        this.debugCounters.updateOptionalHashCounter(
-                OptionalHashCounters.CPU_COMPARE_MISS,
-                debugOptionalCPUCompareMiss);
-        this.debugCounters.updateOptionalHashCounter(
-                OptionalHashCounters.CPU_COMPARE, debugOptionalCPUCompareHit
-                        + debugOptionalCPUCompareMiss);
-        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.HITS,
-                debugOptionalHashHits);
-        this.debugCounters.updateOptionalHashCounter(
-                OptionalHashCounters.MISSES, debugOptionalHashMisses);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.CPU_COMPARE_HIT, debugOptionalCPUCompareHit);
+        this.debugCounters
+                .updateOptionalHashCounter(OptionalHashCounters.CPU_COMPARE_MISS, debugOptionalCPUCompareMiss);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.CPU_COMPARE, debugOptionalCPUCompareHit
+                + debugOptionalCPUCompareMiss);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.HITS, debugOptionalHashHits);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.MISSES, debugOptionalHashMisses);
 
         this.debugCounters.dumpCounters(ctx.getCounterContext());
 
@@ -906,32 +801,17 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugBloomFilterFail = 0;
         this.debugCounters.reset();
 
-        ctx.getCounterContext()
-                .getCounter("profile.cpu." + this.debugCounters.getDebugID(),
-                        true).update(profileCPU);
-        ctx.getCounterContext()
-                .getCounter(
-                        "profile.io.in.disk." + this.debugCounters.getDebugID(),
-                        true).update(profileIOInDisk);
-        ctx.getCounterContext()
-                .getCounter(
-                        "profile.io.in.network."
-                                + this.debugCounters.getDebugID(), true)
+        ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);
+        ctx.getCounterContext().getCounter("profile.io.in.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInDisk);
+        ctx.getCounterContext().getCounter("profile.io.in.network." + this.debugCounters.getDebugID(), true)
                 .update(profileIOInNetwork);
-        ctx.getCounterContext()
-                .getCounter(
-                        "profile.io.out.disk."
-                                + this.debugCounters.getDebugID(), true)
+        ctx.getCounterContext().getCounter("profile.io.out.disk." + this.debugCounters.getDebugID(), true)
                 .update(profileIOOutDisk);
-        ctx.getCounterContext()
-                .getCounter(
-                        "profile.io.out.network."
-                                + this.debugCounters.getDebugID(), true)
+        ctx.getCounterContext().getCounter("profile.io.out.network." + this.debugCounters.getDebugID(), true)
                 .update(profileIOOutNetwork);
-        ctx.getCounterContext()
-                .getCounter(
-                        "profile.output." + this.debugCounters.getDebugID(),
-                        true).update(profileOutputRecords);
+        ctx.getCounterContext().getCounter("profile.output." + this.debugCounters.getDebugID(), true)
+                .update(profileOutputRecords);
 
         profileCPU = 0;
         profileIOInDisk = 0;
@@ -943,10 +823,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     }
 
     private void flushResidentAsFinalResult() throws HyracksDataException {
-        RunFileWriter resultRun = new RunFileWriter(
-                ctx.createManagedWorkspaceFile("result_"
-                        + HybridHashGrouper.class.getSimpleName()),
-                ctx.getIOManager());
+        RunFileWriter resultRun = new RunFileWriter(ctx.createManagedWorkspaceFile("result_"
+                + HybridHashGrouper.class.getSimpleName()), ctx.getIOManager());
 
         int directOutputRecords = 0;
 
@@ -970,37 +848,28 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 for (int k = 0; k < keyFields.length + decorFields.length; k++) {
                     outputTupleBuilder.addField(groupFrameAccessor, i, k);
                 }
-                merger.outputFinalResult(outputTupleBuilder,
-                        groupFrameAccessor, i, aggState);
+                merger.outputFinalResult(outputTupleBuilder, groupFrameAccessor, i, aggState);
 
-                if (!outputAppender.append(
-                        outputTupleBuilder.getFieldEndOffsets(),
-                        outputTupleBuilder.getByteArray(), 0,
-                        outputTupleBuilder.getSize())) {
-                    residentPartitionFinalDump += outputAppender
-                            .getTupleCount();
-                    this.debugCounters.updateOptionalCommonCounter(
-                            OptionalCommonCounters.FRAME_OUTPUT, 1);
+                if (!outputAppender.append(outputTupleBuilder.getFieldEndOffsets(), outputTupleBuilder.getByteArray(),
+                        0, outputTupleBuilder.getSize())) {
+                    residentPartitionFinalDump += outputAppender.getTupleCount();
+                    this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
                     FrameUtils.flushFrame(outputBuffer, resultRun);
                     profileIOOutNetwork++;
 
-                    this.debugCounters.updateOptionalCommonCounter(
-                            OptionalCommonCounters.RECORD_OUTPUT,
+                    this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                             outputAppender.getTupleCount());
 
                     outputAppender.reset(outputBuffer, true);
-                    if (!outputAppender.append(
-                            outputTupleBuilder.getFieldEndOffsets(),
-                            outputTupleBuilder.getByteArray(), 0,
-                            outputTupleBuilder.getSize())) {
+                    if (!outputAppender.append(outputTupleBuilder.getFieldEndOffsets(),
+                            outputTupleBuilder.getByteArray(), 0, outputTupleBuilder.getSize())) {
                         throw new HyracksDataException(
                                 "Failed to dump a group from the hash table to a frame: possibly the size of the tuple is too large.");
                     }
                 }
             }
             hashtableFrameIndex++;
-            if (contents.length > hashtableFrameIndex
-                    && currentWorkingFrame >= hashtableFrameIndex) {
+            if (contents.length > hashtableFrameIndex && currentWorkingFrame >= hashtableFrameIndex) {
                 bufToFlush = contents[hashtableFrameIndex];
             } else {
                 bufToFlush = null;
@@ -1009,18 +878,15 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         if (outputAppender.getTupleCount() > 0) {
             residentPartitionFinalDump += outputAppender.getTupleCount();
-            this.debugCounters.updateOptionalCommonCounter(
-                    OptionalCommonCounters.FRAME_OUTPUT, 1);
+            this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
             FrameUtils.flushFrame(outputBuffer, resultRun);
             profileIOOutNetwork++;
-            this.debugCounters.updateOptionalCommonCounter(
-                    OptionalCommonCounters.RECORD_OUTPUT,
+            this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                     outputAppender.getTupleCount());
             outputAppender.reset(outputBuffer, true);
         }
 
-        this.debugCounters.updateOptionalCustomizedCounter(
-                ".result.hybrid.dump", residentPartitionFinalDump);
+        this.debugCounters.updateOptionalCustomizedCounter(".result.hybrid.dump", residentPartitionFinalDump);
 
         resultRun.close();
         LOGGER.warning("RESULT: " + directOutputRecords + " groups in "
