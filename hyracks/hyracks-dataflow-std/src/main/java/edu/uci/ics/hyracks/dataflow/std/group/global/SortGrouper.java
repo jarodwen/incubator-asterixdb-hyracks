@@ -37,9 +37,9 @@ import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptor;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption.GroupOutputState;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection.OptionalCommonCounters;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection.OptionalSortCounters;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection.RequiredCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.OptionalCommonCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.OptionalSortCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.RequiredCounters;
 
 /**
  * An implementation of aggregating each frame of the input data using sort-based approach.

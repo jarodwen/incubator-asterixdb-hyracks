@@ -28,7 +28,7 @@ import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.HistogramUtils;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IFrameWriterRunGenerator;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection;
 
 public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriterRunGenerator {
 

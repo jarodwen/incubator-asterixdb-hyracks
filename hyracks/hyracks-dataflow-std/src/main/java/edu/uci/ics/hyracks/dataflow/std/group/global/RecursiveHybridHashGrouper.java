@@ -30,8 +30,8 @@ import edu.uci.ics.hyracks.dataflow.common.io.RunFileReader;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IFrameWriterRunGenerator;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection.OptionalCommonCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.OptionalCommonCounters;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashFunctionFamilyFactoryAdapter;
 
 public class RecursiveHybridHashGrouper implements IFrameWriter {

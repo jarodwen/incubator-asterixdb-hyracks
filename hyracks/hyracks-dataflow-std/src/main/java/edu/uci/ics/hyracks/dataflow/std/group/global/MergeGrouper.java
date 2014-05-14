@@ -27,9 +27,9 @@ import edu.uci.ics.hyracks.dataflow.std.group.AggregateState;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptor;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.RunMergingGroupingFrameReader;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection.OptionalCommonCounters;
-import edu.uci.ics.hyracks.dataflow.std.group.global.costmodels.OperatorDebugCounterCollection.RequiredCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.OptionalCommonCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.RequiredCounters;
 
 public class MergeGrouper {
 
