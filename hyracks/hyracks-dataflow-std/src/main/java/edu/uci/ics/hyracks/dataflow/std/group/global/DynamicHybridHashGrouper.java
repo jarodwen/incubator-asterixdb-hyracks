@@ -15,7 +15,6 @@
 package edu.uci.ics.hyracks.dataflow.std.group.global;
 
 import java.nio.ByteBuffer;
-import java.util.BitSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.logging.Logger;
@@ -25,7 +24,6 @@ import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryComparator;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryComparatorFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFactory;
-import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFamily;
 import edu.uci.ics.hyracks.api.dataflow.value.INormalizedKeyComputerFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.ITuplePartitionComputer;
 import edu.uci.ics.hyracks.api.dataflow.value.RecordDescriptor;
@@ -43,7 +41,6 @@ import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption.GroupOutputState;
-import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashFunctionFamilyFactoryAdapter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashTableFrameTupleAppender;
 
 public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper {
@@ -88,26 +85,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private final int frameSize;
 
     private final IBinaryComparatorFactory[] comparatorFactories;
-    private final IBinaryHashFunctionFamily[] hashFunctionFamilies;
     private final INormalizedKeyComputerFactory firstKeyNormalizerFactory;
-    private final IAggregatorDescriptorFactory aggregatorFactory, partialMergerFactory, finalMergerFactory;
+    private final IAggregatorDescriptorFactory aggregatorFactory, mergerFactory;
     private final RecordDescriptor inRecordDesc, outRecordDesc;
-
-    /**
-     * Input data statistics: total number of records and the expected
-     * number of output records.
-     */
-    private final long inputRecordCount, outputGroupCount;
-
-    /**
-     * The size of the group state, used to properly size the hash table.
-     */
-    private final int groupStateSizeInBytes;
-
-    /**
-     * About the fuzziness of the hashing and partitioning
-     */
-    private final double fudgeFactor;
 
     /**
      * The output writer
@@ -127,7 +107,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     /**
      * The number of hash table slots.
      */
-    private int tableSize;
+    private final int tableSize;
 
     /**
      * The number of partitions.
@@ -173,35 +153,17 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private long[] recordsInParts, keysInParts;
 
     /**
-     * Hashing level random seed, so that group-by operations at different
-     * levels could have different hash functions.
-     */
-    private final int hashLevelSeed;
-
-    /**
      * Whether to use mini-bloomfilter to enhance the hashtable lookup
      */
     private final boolean useMiniBloomFilter;
-
-    /**
-     * The ratio between hash table slot count and the number of records that
-     * can fit in the hasht able
-     */
-    private final double hashtableSlotRatio;
 
     private int[] keysInPartialResult;
 
     private IBinaryComparator[] comparators;
     private ITuplePartitionComputer tuplePartitionComputer;
-    private IAggregatorDescriptor aggregator, partialMerger, finalMerger;
+    private IAggregatorDescriptor aggregator, merger;
     private IBinaryHashFunctionFactory[] hashFunctionFactories;
-    private AggregateState aggState, partialAggState, finalAggState;
-
-    /**
-     * Hash function level variable, used to indicate different hash levels (so
-     * that different hash functions can be used)
-     */
-    private int hashLevelSeedVariable;
+    private AggregateState aggState;
 
     /**
      * Frame accessors: inputFrameTupleAccessor is for the input frame, and
@@ -220,11 +182,6 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private FrameTupleAppender spillFrameTupleAppender, outputFrameTupleAppender;
 
     /**
-     * The number of hash table slots each frame can contain
-     */
-    private int htSlotsPerFrame;
-
-    /**
      * The hashtable lookup index for frame and tuple
      */
     private int htLookupFrameIndex = -1, htLookupTupleIndex = -1;
@@ -233,11 +190,6 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * The bloomfilter lookup cache to store the bloomfilter byte found.
      */
     private byte bloomFilterByte = (byte) -1;
-
-    /**
-     * Is the hash table (for resident partition) full
-     */
-    private boolean isHashtableFull = false;
 
     /**
      * the list of unpinned partition ids.
@@ -253,18 +205,29 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
     private static final Logger LOGGER = Logger.getLogger(DynamicHybridHashGrouper.class.getSimpleName());
 
-    public DynamicHybridHashGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            long inputRecordCount, long outputGroupCount, int groupStateSizeInBytes, double fudgeFactor,
-            double htSlotRatio, INormalizedKeyComputerFactory firstKeyNormalizerFactory,
-            IBinaryComparatorFactory[] comparatorFactories, IBinaryHashFunctionFamily[] hashFunctionFamilies,
-            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory partialMergerFactory,
-            IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor inRecordDescriptor,
-            RecordDescriptor outRecordDescriptor, int hashLevelSeed, IFrameWriter outputWriter,
-            boolean useMiniBloomFilter, int numParts, boolean pinHighAbsorptionParts, boolean alwaysPinLastPart,
-            boolean isGenerateRuns) throws HyracksDataException {
+    public DynamicHybridHashGrouper(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            INormalizedKeyComputerFactory firstKeyNormalizerFactory,
+            IBinaryComparatorFactory[] comparatorFactories,
+            IBinaryHashFunctionFactory[] hashFunctionFactories,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory mergerFactory,
+            RecordDescriptor inRecordDescriptor,
+            RecordDescriptor outRecordDescriptor,
+            boolean enableHistorgram,
+            IFrameWriter outputWriter,
+            boolean isGenerateRuns,
+            int tableSize,
+            int numParts,
+            boolean useMiniBloomFilter,
+            boolean pinHighAbsorptionParts,
+            boolean alwaysPinLastPart) throws HyracksDataException {
 
-        super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, finalMergerFactory, inRecordDescriptor,
-                outRecordDescriptor, false, outputWriter, isGenerateRuns);
+        super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, mergerFactory, inRecordDescriptor,
+                outRecordDescriptor, enableHistorgram, outputWriter, isGenerateRuns);
 
         this.ctx = ctx;
         this.keyFields = keyFields;
@@ -273,20 +236,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.framesLimit = framesLimit;
         this.firstKeyNormalizerFactory = firstKeyNormalizerFactory;
         this.comparatorFactories = comparatorFactories;
-        this.hashFunctionFamilies = hashFunctionFamilies;
         this.inRecordDesc = inRecordDescriptor;
         this.outRecordDesc = outRecordDescriptor;
-        this.hashLevelSeed = hashLevelSeed;
         this.outputWriter = outputWriter;
 
+        this.tableSize = tableSize;
+
         this.aggregatorFactory = aggregatorFactory;
-        this.partialMergerFactory = partialMergerFactory;
-        this.finalMergerFactory = finalMergerFactory;
-        this.inputRecordCount = inputRecordCount;
-        this.outputGroupCount = outputGroupCount;
-        this.groupStateSizeInBytes = groupStateSizeInBytes;
-        this.fudgeFactor = fudgeFactor;
-        this.hashtableSlotRatio = htSlotRatio;
+        this.mergerFactory = mergerFactory;
         this.pinHighAbsorptionPartitions = pinHighAbsorptionParts;
         this.pinLastPartitionAlways = alwaysPinLastPart;
 
@@ -313,73 +270,6 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.hashtableOutputBuffer = frameManager.allocateFrame();
     }
 
-    /**
-     * Compute the hash table slots for the given number of frames. The goal is
-     * to divide the frames into two parts, one for the hash table headers and
-     * the other is for the hash table contents, so that the number of slots is
-     * htSlotRatio times of the number of table entries.
-     * 
-     * @param framesForHashtable
-     * @return
-     */
-    public static int computeHashtableSlots(int framesForHashtable, int frameSize, int recordSize, double htSlotRatio,
-            int bytesForFrameReference, int bytesForTupleReference, boolean useMiniBloomfilter,
-            int bytesForMiniBloomfilter) {
-        int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameReference
-                + bytesForTupleReference;
-        int hashtableEntrySize = recordSize + bytesForFrameReference + bytesForTupleReference;
-        int headerRefPerFrame = frameSize / headerRefSize;
-        int entryPerFrame = frameSize / hashtableEntrySize;
-
-        int headerPages = (int) Math.ceil(framesForHashtable * entryPerFrame
-                / (headerRefPerFrame / htSlotRatio + entryPerFrame));
-
-        int slots = headerPages * headerRefPerFrame;
-
-        int numsToCheck = (int) Math.min(slots * 0.01, 1000);
-        BitSet candidates = new BitSet();
-        candidates.set(0, numsToCheck);
-        for (int i = (slots % 2 == 0) ? 0 : 1; i < numsToCheck; i = i + 2) {
-            candidates.set(i, false);
-        }
-        for (int i = 3; i < 1000; i = i + 2) {
-            int nextBit = candidates.nextSetBit(0);
-            while (nextBit >= 0) {
-                if ((slots + nextBit) % i == 0) {
-                    candidates.set(nextBit, false);
-                    if (candidates.cardinality() == 1) {
-                        break;
-                    }
-                }
-                nextBit = candidates.nextSetBit(nextBit + 1);
-            }
-            if (candidates.cardinality() == 1) {
-                break;
-            }
-        }
-
-        return slots + candidates.nextSetBit(0);
-    }
-
-    /**
-     * Compute the number of header pages for the hash table, given the number
-     * of slots.
-     * 
-     * @param hashtableSlots
-     * @param frameSize
-     * @param bytesForFrameRef
-     * @param bytesForTupleRef
-     * @param useMiniBloomfilter
-     * @param bytesForMiniBloomfilter
-     * @return
-     */
-    public static int getHeaderFrameCountForHashtable(int hashtableSlots, int frameSize, int bytesForFrameRef,
-            int bytesForTupleRef, boolean useMiniBloomfilter, int bytesForMiniBloomfilter) {
-        int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameRef + bytesForTupleRef;
-        int headerRefPerFrame = frameSize / headerRefSize;
-        return (int) Math.ceil((double) hashtableSlots / headerRefPerFrame);
-    }
-
     /*
      * (non-Javadoc)
      * 
@@ -398,12 +288,6 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             this.comparators[i] = this.comparatorFactories[i].createBinaryComparator();
         }
 
-        this.hashFunctionFactories = new IBinaryHashFunctionFactory[this.hashFunctionFamilies.length];
-        for (int i = 0; i < hashFunctionFactories.length; i++) {
-            hashFunctionFactories[i] = HashFunctionFamilyFactoryAdapter.getFunctionFactoryFromFunctionFamily(
-                    this.hashFunctionFamilies[i], hashLevelSeed + hashLevelSeedVariable);
-        }
-
         this.tuplePartitionComputer = new FieldHashPartitionComputerFactory(keyFields, hashFunctionFactories)
                 .createPartitioner();
 
@@ -411,9 +295,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 keysInPartialResult, null);
         this.aggState = aggregator.createAggregateStates();
 
-        this.partialMerger = partialMergerFactory.createAggregator(ctx, outRecordDesc, outRecordDesc,
-                keysInPartialResult, keysInPartialResult, null);
-        this.finalMerger = finalMergerFactory.createAggregator(ctx, outRecordDesc, outRecordDesc, keysInPartialResult,
+        this.merger = mergerFactory.createAggregator(ctx, outRecordDesc, outRecordDesc, keysInPartialResult,
                 keysInPartialResult, null);
 
         this.inputFrameTupleAccessor = new FrameTupleAccessor(frameSize, inRecordDesc);
@@ -428,11 +310,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.spillFrameTupleAppender = new FrameTupleAppender(frameSize);
         this.outputFrameTupleAppender = new FrameTupleAppender(frameSize);
 
-        // initialize hash table
-        this.tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes, hashtableSlotRatio,
-                HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useMiniBloomFilter, HT_MINI_BLOOM_FILTER_SIZE);
-        int htHeadersCount = getHeaderFrameCountForHashtable(this.tableSize, frameSize, HT_FRAME_REF_SIZE,
-                HT_TUPLE_REF_SIZE, useMiniBloomFilter, HT_MINI_BLOOM_FILTER_SIZE);
+        int slotsPerFrame = frameSize
+                / ((useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE);
+        int htHeadersCount = (int) Math.ceil((double) this.tableSize / slotsPerFrame);
         this.htHeaderFrames = new int[htHeadersCount];
         for (int i = 0; i < this.htHeaderFrames.length; i++) {
             this.htHeaderFrames[i] = frameManager.allocateFrame();
@@ -471,7 +351,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * edu.uci.ics.hyracks.api.comm.IFrameWriter#nextFrame(java.nio.ByteBuffer)
      */
     @Override
-    public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
+    public void nextFrame(
+            ByteBuffer buffer) throws HyracksDataException {
         this.inputFrameTupleAccessor.reset(buffer);
         int tupleCount = this.inputFrameTupleAccessor.getTupleCount();
 
@@ -595,7 +476,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         }
     }
 
-    private void getHTSlotPointer(int htSlotID) throws HyracksDataException {
+    private void getHTSlotPointer(
+            int htSlotID) throws HyracksDataException {
         int slotsPerFrame = frameSize
                 / (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
         int slotFrameIndex = htSlotID / slotsPerFrame;
@@ -626,8 +508,11 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * @param tupleIndex
      * @throws HyracksDataException
      */
-    private void setHTSlotPointer(int htSlotID, byte bloomFilterByte, int frameIndex, int tupleIndex)
-            throws HyracksDataException {
+    private void setHTSlotPointer(
+            int htSlotID,
+            byte bloomFilterByte,
+            int frameIndex,
+            int tupleIndex) throws HyracksDataException {
         int slotsPerFrame = frameSize
                 / (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0));
         int slotFrameIndex = htSlotID / slotsPerFrame;
@@ -659,7 +544,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * @return
      * @throws HyracksDataException
      */
-    private boolean allocateBufferForPart(int partID) throws HyracksDataException {
+    private boolean allocateBufferForPart(
+            int partID) throws HyracksDataException {
         int newFrameID = frameManager.allocateFrame();
         while (newFrameID < 0) {
             // no more free frames from the pool of the frame manager
@@ -718,7 +604,10 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         return partIDToSpill;
     }
 
-    private byte insertIntoBloomFilter(int h, byte bfByte, boolean isInitialize) {
+    private byte insertIntoBloomFilter(
+            int h,
+            byte bfByte,
+            boolean isInitialize) {
         byte bfByteAfterInsertion = bfByte;
         if (isInitialize) {
             bfByteAfterInsertion = 0;
@@ -737,7 +626,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * @return
      * @throws HyracksDataException
      */
-    private int getUnpinnedSpilledPartIDForSpilling(int partID) throws HyracksDataException {
+    private int getUnpinnedSpilledPartIDForSpilling(
+            int partID) throws HyracksDataException {
         if (this.unpinnedSpilledParts.size() == 0) {
             // right now at most one partition can be pinned
             int pinnedParts = 0;
@@ -763,7 +653,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * @param spillPartID
      * @throws HyracksDataException
      */
-    private void spillGroup(ArrayTupleBuilder tb, int spillPartID) throws HyracksDataException {
+    private void spillGroup(
+            ArrayTupleBuilder tb,
+            int spillPartID) throws HyracksDataException {
         if (this.partitionOutputBuffers[spillPartID] < 0) {
             this.partitionOutputBuffers[spillPartID] = frameManager.allocateFrame();
             spillFrameTupleAppender.reset(frameManager.getFrame(this.partitionOutputBuffers[spillPartID]), true);
@@ -789,8 +681,10 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         }
     }
 
-    private void flush(IFrameWriter writer, IGrouperFlushOption flushOption, int partitionIndex)
-            throws HyracksDataException {
+    private void flush(
+            IFrameWriter writer,
+            IGrouperFlushOption flushOption,
+            int partitionIndex) throws HyracksDataException {
 
         this.outputFrameTupleAppender.reset(frameManager.getFrame(hashtableOutputBuffer), true);
 
@@ -803,7 +697,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         if (flushOption.getOutputState() == GroupOutputState.GROUP_STATE) {
             aggDesc = aggregator;
         } else if (flushOption.getOutputState() == GroupOutputState.RESULT_STATE) {
-            aggDesc = finalMerger;
+            aggDesc = merger;
         } else {
             throw new HyracksDataException("Cannot output " + GroupOutputState.RAW_STATE.name()
                     + " for flushing hybrid hash grouper");
@@ -871,8 +765,11 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         }
     }
 
-    private boolean findMatch(FrameTupleAccessor inputTupleAccessor, int tupleIndex, int rawHashValue, int htSlotID)
-            throws HyracksDataException {
+    private boolean findMatch(
+            FrameTupleAccessor inputTupleAccessor,
+            int tupleIndex,
+            int rawHashValue,
+            int htSlotID) throws HyracksDataException {
         getHTSlotPointer(htSlotID);
 
         if (htLookupFrameIndex < 0) {
@@ -902,7 +799,11 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         return false;
     }
 
-    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx, FrameTupleAccessor a2, int t2Idx) {
+    protected boolean sameGroup(
+            FrameTupleAccessor a1,
+            int t1Idx,
+            FrameTupleAccessor a2,
+            int t2Idx) {
         for (int i = 0; i < comparators.length; ++i) {
             int fIdx = keyFields[i];
             int s1 = a1.getTupleStartOffset(t1Idx) + a1.getFieldSlotsLength() + a1.getFieldStartOffset(t1Idx, fIdx);
@@ -916,7 +817,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         return true;
     }
 
-    private boolean lookupBloomFilter(int h, byte bfByte) {
+    private boolean lookupBloomFilter(
+            int h,
+            byte bfByte) {
         for (int i = 0; i < HT_BF_PRIME_FUNC_COUNT; i++) {
             int bitIndex = (int) (h >> (12 * i)) & 0x07;
             if (!((bfByte & (1L << bitIndex)) != 0)) {
@@ -949,7 +852,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     }
 
     @Override
-    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException {
+    protected void flush(
+            IFrameWriter writer,
+            GrouperFlushOption flushOption) throws HyracksDataException {
 
     }
 

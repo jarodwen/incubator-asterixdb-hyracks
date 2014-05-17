@@ -92,7 +92,7 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
             UTF8StringParserFactory.INSTANCE, UTF8StringParserFactory.INSTANCE, UTF8StringParserFactory.INSTANCE,
             UTF8StringParserFactory.INSTANCE, }, '|');
 
-    LocalGroupOperatorDescriptor.GroupAlgorithms localGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.DYNAMIC_HYBRID_HASH_MAP;
+    LocalGroupOperatorDescriptor.GroupAlgorithms localGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.HASH_GROUP;
     LocalGroupOperatorDescriptor.GroupAlgorithms globalGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.RECURSIVE_HYBRID_HASH;
 
     private final SimpleUniformDataPartitionDescriptor dataPartitionDesc = new SimpleUniformDataPartitionDescriptor(
@@ -106,8 +106,9 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
     private final int groupStateInBytes = 64;
     private final double fudgeFactor = 1.4;
 
-    private AbstractSingleActivityOperatorDescriptor getPrinter(JobSpecification spec, String prefix)
-            throws IOException {
+    private AbstractSingleActivityOperatorDescriptor getPrinter(
+            JobSpecification spec,
+            String prefix) throws IOException {
 
         ResultSetId rsId = new ResultSetId(1);
         AbstractSingleActivityOperatorDescriptor printer = new PlainFileWriterOperatorDescriptor(spec,

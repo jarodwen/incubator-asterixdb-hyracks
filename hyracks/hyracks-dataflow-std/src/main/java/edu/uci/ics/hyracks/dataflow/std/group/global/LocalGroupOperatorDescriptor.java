@@ -15,6 +15,7 @@
 package edu.uci.ics.hyracks.dataflow.std.group.global;
 
 import java.nio.ByteBuffer;
+import java.util.BitSet;
 
 import edu.uci.ics.hyracks.api.comm.IFrameWriter;
 import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
@@ -140,12 +141,23 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         }
     }
 
-    public LocalGroupOperatorDescriptor(IOperatorDescriptorRegistry spec, int[] keyFields, int[] decorFields,
-            IDataPartitionDescriptor dataPartDesc, int framesLimit, int tableSize, int groupStateSizeInBytes,
-            double fudgeFactor, IBinaryComparatorFactory[] comparatorFactories,
-            IBinaryHashFunctionFamily[] hashFamilies, INormalizedKeyComputerFactory firstNormalizerFactory,
-            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory partialMergerFactory,
-            IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor outRecDesc, GroupAlgorithms algorithm,
+    public LocalGroupOperatorDescriptor(
+            IOperatorDescriptorRegistry spec,
+            int[] keyFields,
+            int[] decorFields,
+            IDataPartitionDescriptor dataPartDesc,
+            int framesLimit,
+            int tableSize,
+            int groupStateSizeInBytes,
+            double fudgeFactor,
+            IBinaryComparatorFactory[] comparatorFactories,
+            IBinaryHashFunctionFamily[] hashFamilies,
+            INormalizedKeyComputerFactory firstNormalizerFactory,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory partialMergerFactory,
+            IAggregatorDescriptorFactory finalMergerFactory,
+            RecordDescriptor outRecDesc,
+            GroupAlgorithms algorithm,
             int levelSeed) throws HyracksDataException {
         super(spec, 1, 1);
         this.framesLimit = framesLimit;
@@ -171,10 +183,90 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         this.fudgeFactor = fudgeFactor;
     }
 
+    /**
+     * Compute the hash table slots for the given number of frames. The goal is
+     * to divide the frames into two parts, one for the hash table headers and
+     * the other is for the hash table contents, so that the number of slots is
+     * htSlotRatio times of the number of table entries.
+     * 
+     * @param framesForHashtable
+     * @return
+     */
+    public static int computeHashtableSlots(
+            int framesForHashtable,
+            int frameSize,
+            int recordSize,
+            double htSlotRatio,
+            int bytesForFrameReference,
+            int bytesForTupleReference,
+            boolean useMiniBloomfilter,
+            int bytesForMiniBloomfilter) {
+        int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameReference
+                + bytesForTupleReference;
+        int hashtableEntrySize = recordSize + bytesForFrameReference + bytesForTupleReference;
+        int headerRefPerFrame = frameSize / headerRefSize;
+        int entryPerFrame = frameSize / hashtableEntrySize;
+
+        int headerPages = (int) Math.ceil(framesForHashtable * entryPerFrame
+                / (headerRefPerFrame / htSlotRatio + entryPerFrame));
+
+        int slots = headerPages * headerRefPerFrame;
+
+        int numsToCheck = (int) Math.min(slots * 0.01, 1000);
+        BitSet candidates = new BitSet();
+        candidates.set(0, numsToCheck);
+        for (int i = (slots % 2 == 0) ? 0 : 1; i < numsToCheck; i = i + 2) {
+            candidates.set(i, false);
+        }
+        for (int i = 3; i < 1000; i = i + 2) {
+            int nextBit = candidates.nextSetBit(0);
+            while (nextBit >= 0) {
+                if ((slots + nextBit) % i == 0) {
+                    candidates.set(nextBit, false);
+                    if (candidates.cardinality() == 1) {
+                        break;
+                    }
+                }
+                nextBit = candidates.nextSetBit(nextBit + 1);
+            }
+            if (candidates.cardinality() == 1) {
+                break;
+            }
+        }
+
+        return slots + candidates.nextSetBit(0);
+    }
+
+    /**
+     * Compute the number of header pages for the hash table, given the number
+     * of slots.
+     * 
+     * @param hashtableSlots
+     * @param frameSize
+     * @param bytesForFrameRef
+     * @param bytesForTupleRef
+     * @param useMiniBloomfilter
+     * @param bytesForMiniBloomfilter
+     * @return
+     */
+    public static int getHeaderFrameCountForHashtable(
+            int hashtableSlots,
+            int frameSize,
+            int bytesForFrameRef,
+            int bytesForTupleRef,
+            boolean useMiniBloomfilter,
+            int bytesForMiniBloomfilter) {
+        int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameRef + bytesForTupleRef;
+        int headerRefPerFrame = frameSize / headerRefSize;
+        return (int) Math.ceil((double) hashtableSlots / headerRefPerFrame);
+    }
+
     @Override
-    public IOperatorNodePushable createPushRuntime(final IHyracksTaskContext ctx,
-            IRecordDescriptorProvider recordDescProvider, final int partition, int nPartitions)
-            throws HyracksDataException {
+    public IOperatorNodePushable createPushRuntime(
+            final IHyracksTaskContext ctx,
+            IRecordDescriptorProvider recordDescProvider,
+            final int partition,
+            int nPartitions) throws HyracksDataException {
 
         final IBinaryComparator[] comparators = new IBinaryComparator[comparatorFactories.length];
         for (int i = 0; i < comparators.length; i++) {
@@ -223,9 +315,11 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, writer);
                         break;
                     case SIMPLE_HYBRID_HASH:
-                        grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
-                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize,
-                                comparatorFactories, hashFunctionFactories, 1, true);
+                        grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
+                                firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
+                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
+                                RecursiveHybridHashGrouper.computeHybridHashResidentPartitions(framesLimit, 1), true,
+                                false, true);
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
@@ -239,10 +333,9 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case DYNAMIC_HYBRID_HASH_MAP:
                         grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
-                                recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
-                                1.0, firstNormalizerFactory, comparatorFactories, hashFamilies,
-                                aggregatorFactory, partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc,
-                                levelSeed, writer, true, 1, false, true, false);
+                                firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
+                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1, true,
+                                false, true);
                         break;
                     case DYNAMIC_HYBRID_HASH_REDUCE:
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
@@ -268,7 +361,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
              * {@link AbstractHistogramPushBasedGrouper}, the grouper can be changed to use the proper algorithm.
              */
             @Override
-            public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
+            public void nextFrame(
+                    ByteBuffer buffer) throws HyracksDataException {
                 debugInputFrameCount++;
                 grouper.nextFrame(buffer);
             }
@@ -313,13 +407,19 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
     public static final int MIN_RECURSIVE_STEP = 100;
 
-    public static int computeMinRecursiveStepLevel(long recordsToProcess, int recordSizeInBytes, int memoryInPages,
+    public static int computeMinRecursiveStepLevel(
+            long recordsToProcess,
+            int recordSizeInBytes,
+            int memoryInPages,
             int pageSizeInBytes) {
         return (int) Math.max(MIN_RECURSIVE_STEP,
                 computeMaxRecursiveLevel(recordsToProcess, recordSizeInBytes, memoryInPages, pageSizeInBytes));
     }
 
-    public static int computeMaxRecursiveLevel(long recordsToProcess, int recordSizeInBytes, int memoryInPages,
+    public static int computeMaxRecursiveLevel(
+            long recordsToProcess,
+            int recordSizeInBytes,
+            int memoryInPages,
             int pageSizeInBytes) {
         return (int) Math.max(
                 1,
