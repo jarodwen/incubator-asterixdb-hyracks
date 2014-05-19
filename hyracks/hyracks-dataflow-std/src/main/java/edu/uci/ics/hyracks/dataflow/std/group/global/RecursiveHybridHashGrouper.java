@@ -53,6 +53,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
     private final int groupStateSizeInBytes;
     private final double fudgeFactor;
 
+    private final boolean useDynamicDestaging;
+
     private final IFrameWriter outputWriter;
 
     private final int hashLevelSeed;
@@ -87,7 +89,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             RecordDescriptor inRecordDescriptor,
             RecordDescriptor outRecordDescriptor,
             int hashLevelSeed,
-            IFrameWriter outputWriter) throws HyracksDataException {
+            IFrameWriter outputWriter,
+            boolean useDynamic) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -110,6 +113,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         this.outputGroupCount = outputGroupCount;
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
+
+        this.useDynamicDestaging = useDynamic;
 
         this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
                 + "." + String.valueOf(Thread.currentThread().getId()));
@@ -147,10 +152,17 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             hashLevelSeedVariable += LocalGroupOperatorDescriptor.computeMaxRecursiveLevel(inputRecordCount,
                     groupStateSizeInBytes, framesLimit, frameSize);
         } else {
-            grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit, this.firstKeyNormalizerFactory,
-                    comparatorFactories, hashFunctionFactories, aggregatorFactory, finalMergerFactory, inRecordDesc,
-                    outRecordDesc, false, outputWriter, true, tableSize, hybridHashSpilledPartitions,
-                    hybridHashResidentPartitions, true, false, true);
+            if (useDynamicDestaging) {
+                grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
+                        this.firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
+                        finalMergerFactory, inRecordDesc, outRecordDesc, false, outputWriter, true, tableSize,
+                        hybridHashSpilledPartitions, true, false, true);
+            } else {
+                grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
+                        this.firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
+                        finalMergerFactory, inRecordDesc, outRecordDesc, false, outputWriter, true, tableSize,
+                        hybridHashSpilledPartitions, hybridHashResidentPartitions, true, false, true);
+            }
         }
         grouper.open();
     }
@@ -324,11 +336,19 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid." + runLevel + "." + runIdx
                     + ".partitions", runPartition);
 
-            HybridHashGrouper hybridHashGrouper = new HybridHashGrouper(ctx, keyFieldsInGroupState,
-                    decorFieldsInGroupState, framesLimit, firstKeyNormalizerFactory, comparatorFactories,
-                    hashFunctionFactories, partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc,
-                    true, outputWriter, true, tableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
-                            runPartition), true, false, true);
+            IFrameWriterRunGenerator hybridHashGrouper;
+            if (useDynamicDestaging) {
+                hybridHashGrouper = new DynamicHybridHashGrouper(ctx, keyFieldsInGroupState, decorFieldsInGroupState,
+                        framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
+                        partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
+                        true, tableSize, runPartition, true, false, true);
+            } else {
+                hybridHashGrouper = new HybridHashGrouper(ctx, keyFieldsInGroupState, decorFieldsInGroupState,
+                        framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
+                        partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
+                        true, tableSize, runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition),
+                        true, false, true);
+            }
 
             long framesProcessed = 0;
             long recordsProcessed = 0;
@@ -354,9 +374,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
             hybridHashGrouper.wrapup();
 
-            long rawRecordsInResidentPartition = hybridHashGrouper.getRawRecordsInResidentPartition();
-            long groupsInResidentPartition = hybridHashGrouper.getGroupsInResidentPartition();
-            List<Long> rawRecordsInSpillingPartitions = hybridHashGrouper.getRawRecordsInSpillingPartitions();
+            long rawRecordsInResidentPartition = hybridHashGrouper.getRecordsCompletelyAggregated();
+            long groupsInResidentPartition = hybridHashGrouper.getGroupsCompletelyAggregated();
+            List<Long> rawRecordsInSpillingPartitions = hybridHashGrouper.getOutputRunSizeInRows();
             List<RunFileReader> runsFromHybridHash = hybridHashGrouper.getOutputRunReaders();
 
             hybridHashGrouper.close();

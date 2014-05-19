@@ -94,11 +94,21 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
 
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
 
-    public HashGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory mergerFactory,
-            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc, boolean enableHistorgram,
-            IFrameWriter outputWriter, boolean isGenerateRuns, int tableSize,
-            IBinaryComparatorFactory[] comparatorFactories, IBinaryHashFunctionFactory[] hashFunctionFactories,
+    public HashGrouper(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory mergerFactory,
+            RecordDescriptor inRecDesc,
+            RecordDescriptor outRecDesc,
+            boolean enableHistorgram,
+            IFrameWriter outputWriter,
+            boolean isGenerateRuns,
+            int tableSize,
+            IBinaryComparatorFactory[] comparatorFactories,
+            IBinaryHashFunctionFactory[] hashFunctionFactories,
             INormalizedKeyComputerFactory firstNormalizerComputerFactory) throws HyracksDataException {
         super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, mergerFactory, inRecDesc, outRecDesc,
                 enableHistorgram, outputWriter, isGenerateRuns);
@@ -158,7 +168,7 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         this.hashtableFrameTupleAppender = new HashTableFrameTupleAppender(frameSize, LIST_FRAME_REF_SIZE
                 + LIST_TUPLE_REF_SIZE);
 
-        // reset the hash table content frame 
+        // reset the hash table content frame
         this.currentWorkingFrame = 0;
 
         // reset the lookup reference
@@ -173,7 +183,8 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
      * otherwise a new group will be inserted into the hash table.
      */
     @Override
-    public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
+    public void nextFrame(
+            ByteBuffer buffer) throws HyracksDataException {
 
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, 1);
 
@@ -276,7 +287,10 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    private void setSlotPointer(int h, int contentFrameIndex, int contentTupleIndex) {
+    private void setSlotPointer(
+            int h,
+            int contentFrameIndex,
+            int contentTupleIndex) {
         int slotFrameIndex = (int) ((long) h * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE) / frameSize);
         int slotTupleOffset = (int) ((long) h * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE) % frameSize);
 
@@ -284,7 +298,8 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         headers[slotFrameIndex].putInt(slotTupleOffset + INT_SIZE, contentTupleIndex);
     }
 
-    private void getSlotPointer(int h) {
+    private void getSlotPointer(
+            int h) {
         int slotFrameIndex = (int) ((long) h * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE) / frameSize);
         int slotTupleOffset = (int) ((long) h * (LIST_FRAME_REF_SIZE + LIST_TUPLE_REF_SIZE) % frameSize);
 
@@ -292,7 +307,10 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         lookupTupleIndex = headers[slotFrameIndex].getInt(slotTupleOffset + INT_SIZE);
     }
 
-    private boolean findMatch(FrameTupleAccessor accessor, int tupleIndex, int hashValue) throws HyracksDataException {
+    private boolean findMatch(
+            FrameTupleAccessor accessor,
+            int tupleIndex,
+            int hashValue) throws HyracksDataException {
         getSlotPointer(hashValue);
         while (lookupFrameIndex >= 0) {
             hashtableFrameAccessor.reset(contents[lookupFrameIndex]);
@@ -314,7 +332,11 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         return false;
     }
 
-    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx, FrameTupleAccessor a2, int t2Idx) {
+    protected boolean sameGroup(
+            FrameTupleAccessor a1,
+            int t1Idx,
+            FrameTupleAccessor a2,
+            int t2Idx) {
         debugTempCPUCounter++;
         debugRequiredCPU++;
         profileCPU++;
@@ -331,7 +353,8 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         return true;
     }
 
-    private int sortEntry(int hashtableEntryID) {
+    private int sortEntry(
+            int hashtableEntryID) {
         if (tPointers == null) {
             tPointers = new int[POINTER_INIT_SIZE * POINTER_LENGTH];
         }
@@ -373,7 +396,9 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         return ptr;
     }
 
-    protected void sort(int offset, int len) {
+    protected void sort(
+            int offset,
+            int len) {
         int m = offset + (len >> 1);
         int mFrameIndex = tPointers[m * POINTER_LENGTH];
         int mTupleIndex = tPointers[m * POINTER_LENGTH + 1];
@@ -443,7 +468,11 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    private int compare(FrameTupleAccessor accessor1, int tupleIndex1, FrameTupleAccessor accessor2, int tupleIndex2) {
+    private int compare(
+            FrameTupleAccessor accessor1,
+            int tupleIndex1,
+            FrameTupleAccessor accessor2,
+            int tupleIndex2) {
         debugOptionalSortCPUCompare++;
         debugRequiredCPU++;
         profileCPU++;
@@ -472,7 +501,9 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         return 0;
     }
 
-    private void swap(int a, int b) {
+    private void swap(
+            int a,
+            int b) {
         debugOptionalSortCPUCopy++;
         for (int i = 0; i < POINTER_LENGTH; i++) {
             int t = tPointers[a * POINTER_LENGTH + i];
@@ -481,14 +512,19 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    private void vecswap(int a, int b, int n) {
+    private void vecswap(
+            int a,
+            int b,
+            int n) {
         for (int i = 0; i < n; i++, a++, b++) {
             swap(a, b);
         }
     }
 
     @Override
-    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException {
+    protected void flush(
+            IFrameWriter writer,
+            GrouperFlushOption flushOption) throws HyracksDataException {
 
         IAggregatorDescriptor aggregatorToFlush = (flushOption.getOutputState() == GroupOutputState.RESULT_STATE) ? merger
                 : aggregator;
@@ -614,7 +650,7 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
 
         this.groupsInHashtable = 0;
 
-        // reset the hash table content frame 
+        // reset the hash table content frame
         this.currentWorkingFrame = 0;
 
         // reset the lookup reference
@@ -750,5 +786,23 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         profileIOOutDisk = 0;
         profileIOOutNetwork = 0;
 
+    }
+
+    @Override
+    public List<Long> getOutputRunSizeInRows() throws HyracksDataException {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public long getRecordsCompletelyAggregated() {
+        // TODO Auto-generated method stub
+        return 0;
+    }
+
+    @Override
+    public long getGroupsCompletelyAggregated() {
+        // TODO Auto-generated method stub
+        return 0;
     }
 }

@@ -15,6 +15,7 @@
 package edu.uci.ics.hyracks.dataflow.std.group.global;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 
 import edu.uci.ics.hyracks.api.comm.IFrameWriter;
 import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
@@ -54,9 +55,16 @@ public class PreCluster extends AbstractHistogramPushBasedGrouper {
 
     protected long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
 
-    public PreCluster(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory mergerFactory,
-            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc, IBinaryComparatorFactory[] comparatorFactories,
+    public PreCluster(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory mergerFactory,
+            RecordDescriptor inRecDesc,
+            RecordDescriptor outRecDesc,
+            IBinaryComparatorFactory[] comparatorFactories,
             IFrameWriter outputWriter) throws HyracksDataException {
         super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, mergerFactory, inRecDesc, outRecDesc, false,
                 outputWriter, false);
@@ -105,7 +113,8 @@ public class PreCluster extends AbstractHistogramPushBasedGrouper {
      * @see edu.uci.ics.hyracks.api.comm.IFrameWriter#nextFrame(java.nio.ByteBuffer)
      */
     @Override
-    public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
+    public void nextFrame(
+            ByteBuffer buffer) throws HyracksDataException {
         inputFrameAccessor.reset(buffer);
         int tupleCount = inputFrameAccessor.getTupleCount();
 
@@ -208,7 +217,11 @@ public class PreCluster extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx, FrameTupleAccessor a2, int t2Idx) {
+    protected boolean sameGroup(
+            FrameTupleAccessor a1,
+            int t1Idx,
+            FrameTupleAccessor a2,
+            int t2Idx) {
         debugRequiredCPU++;
         profileCPU++;
         for (int i = 0; i < comparators.length; i++) {
@@ -258,7 +271,9 @@ public class PreCluster extends AbstractHistogramPushBasedGrouper {
      * .comm.IFrameWriter, edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption)
      */
     @Override
-    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException {
+    protected void flush(
+            IFrameWriter writer,
+            GrouperFlushOption flushOption) throws HyracksDataException {
         for (int i = 0; i <= frameIndexPointer && i < buffers.length; i++) {
             FrameUtils.flushFrame(buffers[i], writer);
             profileIOOutNetwork++;
@@ -327,6 +342,24 @@ public class PreCluster extends AbstractHistogramPushBasedGrouper {
         this.debugCounters.dumpCounters(ctx.getCounterContext());
 
         this.debugCounters.reset();
+    }
+
+    @Override
+    public List<Long> getOutputRunSizeInRows() throws HyracksDataException {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public long getRecordsCompletelyAggregated() {
+        // TODO Auto-generated method stub
+        return 0;
+    }
+
+    @Override
+    public long getGroupsCompletelyAggregated() {
+        // TODO Auto-generated method stub
+        return 0;
     }
 
 }

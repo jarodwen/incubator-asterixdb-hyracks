@@ -68,7 +68,24 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
     private static final long serialVersionUID = 1L;
 
-    private final int framesLimit, levelSeed, tableSize;
+    /**
+     * The length of hash table frame reference
+     */
+    public static final int HT_FRAME_REF_SIZE = 4;
+
+    /**
+     * The length of hash table tuple reference
+     */
+    public static final int HT_TUPLE_REF_SIZE = 4;
+
+    /**
+     * The byte for mini bloom-filter
+     */
+    public static final int HT_MINI_BLOOM_FILTER_SIZE = 1;
+
+    private static final double hashtableSlotCapRatio = 1.0;
+
+    private final int framesLimit, levelSeed;
 
     /**
      * Descriptor for input data
@@ -76,6 +93,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
     private final IDataPartitionDescriptor dataPartDesc;
 
     private final int[] keyFields, decorFields;
+
+    private final boolean useBloomfilterForHashtable;
 
     private final IAggregatorDescriptorFactory aggregatorFactory, partialMergerFactory, finalMergerFactory;
 
@@ -147,7 +166,6 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             int[] decorFields,
             IDataPartitionDescriptor dataPartDesc,
             int framesLimit,
-            int tableSize,
             int groupStateSizeInBytes,
             double fudgeFactor,
             IBinaryComparatorFactory[] comparatorFactories,
@@ -158,10 +176,11 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             IAggregatorDescriptorFactory finalMergerFactory,
             RecordDescriptor outRecDesc,
             GroupAlgorithms algorithm,
-            int levelSeed) throws HyracksDataException {
+            int levelSeed,
+            boolean bloomfilterHash) throws HyracksDataException {
         super(spec, 1, 1);
         this.framesLimit = framesLimit;
-        this.tableSize = tableSize;
+        this.useBloomfilterForHashtable = bloomfilterHash;
         if (framesLimit <= 3) {
             throw new HyracksDataException("Not enough memory assigned for " + this.displayName
                     + ": at least 3 frames are necessary but just " + framesLimit + " available.");
@@ -288,6 +307,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
         final long groupsInPartitions = dataPartDesc.getUniqueRowCountInPartition(keyFields, partition);
 
+        final int frameSize = ctx.getFrameSize();
+
         return new AbstractUnaryInputUnaryOutputOperatorNodePushable() {
 
             private IFrameWriter grouper = null;
@@ -298,6 +319,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
             @Override
             public void open() throws HyracksDataException {
+                int tableSize;
                 switch (algorithm) {
                     case SORT_GROUP:
                         grouper = new SortGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
@@ -305,16 +327,25 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 writer, false);
                         break;
                     case HASH_GROUP:
+                        tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
+                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
+                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new HashGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize,
                                 comparatorFactories, hashFunctionFactories, firstNormalizerFactory);
                         break;
                     case HASH_GROUP_SORT_MERGE_GROUP:
+                        tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
+                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
+                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new HashGroupSortMergeGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, writer);
                         break;
                     case SIMPLE_HYBRID_HASH:
+                        tableSize = computeHashtableSlots(framesLimit - 2, frameSize, groupStateSizeInBytes,
+                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
+                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
@@ -322,26 +353,35 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 false, true);
                         break;
                     case RECURSIVE_HYBRID_HASH:
+                        tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
+                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
+                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
-                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer);
+                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, false);
                         break;
                     case PRECLUSTER:
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, comparatorFactories, writer);
                         break;
                     case DYNAMIC_HYBRID_HASH_MAP:
+                        tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
+                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
+                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1, true,
                                 false, true);
                         break;
                     case DYNAMIC_HYBRID_HASH_REDUCE:
+                        tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
+                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
+                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
-                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer);
+                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, true);
                         break;
                     case SORT_GROUP_MERGE_GROUP:
                     default:

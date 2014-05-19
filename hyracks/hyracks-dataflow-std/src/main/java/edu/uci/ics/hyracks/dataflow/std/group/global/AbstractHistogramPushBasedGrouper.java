@@ -57,10 +57,18 @@ public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriterR
 
     protected final OperatorDebugCounterCollection debugCounters;
 
-    public AbstractHistogramPushBasedGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields,
-            int framesLimit, IAggregatorDescriptorFactory aggregatorFactory,
-            IAggregatorDescriptorFactory mergerFactory, RecordDescriptor inRecDesc, RecordDescriptor outRecDesc,
-            boolean enableHistorgram, IFrameWriter outputWriter, boolean isGenerateRuns) {
+    public AbstractHistogramPushBasedGrouper(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory mergerFactory,
+            RecordDescriptor inRecDesc,
+            RecordDescriptor outRecDesc,
+            boolean enableHistorgram,
+            IFrameWriter outputWriter,
+            boolean isGenerateRuns) {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -80,14 +88,17 @@ public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriterR
         this.runReaders = new LinkedList<RunFileReader>();
     }
 
-    protected void insertIntoHistogram(IFrameTupleAccessor accessor, int tupleIndex, int[] keyFields)
-            throws HyracksDataException {
+    protected void insertIntoHistogram(
+            IFrameTupleAccessor accessor,
+            int tupleIndex,
+            int[] keyFields) throws HyracksDataException {
         if (enableHistogram) {
             this.histogram[HistogramUtils.getHistogramBucketID(accessor, tupleIndex, keyFields)]++;
         }
     }
 
-    protected void insertIntoHistogram(int hashValue) {
+    protected void insertIntoHistogram(
+            int hashValue) {
         if (enableHistogram) {
             this.histogram[hashValue % this.histogram.length]++;
         }
@@ -112,7 +123,9 @@ public abstract class AbstractHistogramPushBasedGrouper implements IFrameWriterR
         this.dumpAndCleanDebugCounters();
     }
 
-    abstract protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException;
+    abstract protected void flush(
+            IFrameWriter writer,
+            GrouperFlushOption flushOption) throws HyracksDataException;
 
     abstract protected void dumpAndCleanDebugCounters();
 

@@ -41,6 +41,9 @@ import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.GrouperFlushOption;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IGrouperFlushOption.GroupOutputState;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.OptionalHashCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.OptionalSortCounters;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection.RequiredCounters;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashTableFrameTupleAppender;
 
 public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper {
@@ -123,7 +126,10 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
     private final boolean[] partitionSpillingFlags;
 
-    private final boolean pinHighAbsorptionPartitions;
+    /**
+     * Whether the partitions with high absorption ratio should be pinned. Right now we assume that they are not pinned.
+     */
+    private final boolean pinHighAbsorptionPartitions = false;
     /**
      * The flag on whether the last in-memory partition should be pinned, even
      * its absorption has fallen below the average absorption ratio.
@@ -150,7 +156,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * arrays are used to pick the resident partition with lowest absorption
      * ratio to spill.
      */
-    private long[] recordsInParts, keysInParts;
+    private long[] recordsInParts, groupsInParts;
 
     /**
      * Whether to use mini-bloomfilter to enhance the hashtable lookup
@@ -160,7 +166,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private int[] keysInPartialResult;
 
     private IBinaryComparator[] comparators;
-    private ITuplePartitionComputer tuplePartitionComputer;
+    private ITuplePartitionComputer rawTuplePartitionComputer, partialTuplePartitionComputer;
     private IAggregatorDescriptor aggregator, merger;
     private IBinaryHashFunctionFactory[] hashFunctionFactories;
     private AggregateState aggState;
@@ -201,9 +207,27 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      */
     private final boolean isGenerateRuns;
 
+    /**
+     * The flag for whether the hash table is full (only one resident partition is pinned)
+     */
+    private boolean isHashtableFull = false;
+
     private final RunFileWriter[] partSpillRunWriters;
 
+    private List<Long> recordsInsertedForParts;
+    private long recordsInResidentParts, groupsInResidentParts;
+
     private static final Logger LOGGER = Logger.getLogger(DynamicHybridHashGrouper.class.getSimpleName());
+
+    private long debugBloomFilterUpdateCounter = 0, debugBloomFilterLookupCounter = 0, debugOptionalHashHits = 0,
+            debugOptionalHashMisses = 0, debugOptionalCPUCompareHit = 0, debugOptionalCPUCompareMiss = 0,
+            debugRequiredCPU = 0, debugOptionalSortCPUCompare = 0, debugOptionalSortCPUCopy = 0,
+            debugOptionalIOStreamed = 0, debugOptionalIODumped = 0;
+    private double debugOptionalMaxHashtableFillRatio = 0;
+    private long debugTempCPUCounter = 0, debugTempGroupsInHashtable = 0, debugTempUsedSlots = 0;
+    private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork,
+            profileOutputRecords;
+    private long debugBloomFilterSucc = 0, debugBloomFilterFail = 0;
 
     public DynamicHybridHashGrouper(
             IHyracksTaskContext ctx,
@@ -239,12 +263,12 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.inRecordDesc = inRecordDescriptor;
         this.outRecordDesc = outRecordDescriptor;
         this.outputWriter = outputWriter;
+        this.hashFunctionFactories = hashFunctionFactories;
 
         this.tableSize = tableSize;
 
         this.aggregatorFactory = aggregatorFactory;
         this.mergerFactory = mergerFactory;
-        this.pinHighAbsorptionPartitions = pinHighAbsorptionParts;
         this.pinLastPartitionAlways = alwaysPinLastPart;
 
         this.useMiniBloomFilter = useMiniBloomFilter;
@@ -255,13 +279,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.partitionPinFlags = new boolean[this.numParts];
         this.partitionOutputBuffers = new int[this.numParts];
         this.recordsInParts = new long[this.numParts];
-        this.keysInParts = new long[this.numParts];
+        this.groupsInParts = new long[this.numParts];
         for (int i = 0; i < this.numParts; i++) {
             this.partitionSpillingFlags[i] = false;
             this.partitionPinFlags[i] = false;
             this.partitionBuffers[i] = -1;
             this.partitionOutputBuffers[i] = -1;
         }
+        this.recordsInsertedForParts = new LinkedList<Long>();
 
         this.isGenerateRuns = isGenerateRuns;
         this.partSpillRunWriters = new RunFileWriter[this.numParts];
@@ -288,8 +313,10 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             this.comparators[i] = this.comparatorFactories[i].createBinaryComparator();
         }
 
-        this.tuplePartitionComputer = new FieldHashPartitionComputerFactory(keyFields, hashFunctionFactories)
+        this.rawTuplePartitionComputer = new FieldHashPartitionComputerFactory(keyFields, hashFunctionFactories)
                 .createPartitioner();
+        this.partialTuplePartitionComputer = new FieldHashPartitionComputerFactory(keysInPartialResult,
+                hashFunctionFactories).createPartitioner();
 
         this.aggregator = aggregatorFactory.createAggregator(ctx, inRecordDesc, outRecordDesc, keyFields,
                 keysInPartialResult, null);
@@ -357,7 +384,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         int tupleCount = this.inputFrameTupleAccessor.getTupleCount();
 
         for (int tupleIndex = 0; tupleIndex < tupleCount; tupleIndex++) {
-            int rawHashValue = tuplePartitionComputer.partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
+            int rawHashValue = rawTuplePartitionComputer
+                    .partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
             int htSlotID = rawHashValue % this.tableSize;
             int partID = htSlotID % this.numParts;
             if (this.partitionSpillingFlags[partID]) {
@@ -383,7 +411,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
                 spillGroup(groupTupleBuilder, spillPartID);
                 this.recordsInParts[partID]++;
-                this.keysInParts[partID]++;
+                this.groupsInParts[partID]++;
             } else {
                 // The partition is not spilled: try to find a match first
                 if (findMatch(inputFrameTupleAccessor, tupleIndex, rawHashValue, htSlotID)) {
@@ -410,32 +438,30 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
                     aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
 
-                    if (this.partitionPinFlags[partID]) {
+                    if (this.isHashtableFull && this.partitionPinFlags[partID]) {
                         // partition is pinned: need to flush this record
                         int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(partID);
                         spillGroup(groupTupleBuilder, unpinnedPartPicked);
                         this.recordsInParts[unpinnedPartPicked]++;
-                        this.keysInParts[unpinnedPartPicked]++;
+                        this.groupsInParts[unpinnedPartPicked]++;
                     } else {
                         // try to insert a new entry
                         getHTSlotPointer(htSlotID);
-                        if (this.partitionBuffers[partID] < 0) {
-                            this.partitionBuffers[partID] = frameManager.allocateFrame();
-                            if (this.partitionBuffers[partID] < 0) {
-                                throw new HyracksDataException("Failed to allocate a frame for partition " + partID);
-                            }
+                        if (this.partitionBuffers[partID] >= 0) {
+                            hashtableFrameTupleAppender.reset(frameManager.getFrame(this.partitionBuffers[partID]),
+                                    false);
                         }
-                        hashtableFrameTupleAppender.reset(frameManager.getFrame(this.partitionBuffers[partID]), false);
-                        if (!hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
-                                groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(), htLookupFrameIndex,
-                                htLookupTupleIndex)) {
+                        if (this.partitionBuffers[partID] < 0
+                                || !hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
+                                        groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(),
+                                        htLookupFrameIndex, htLookupTupleIndex)) {
 
                             if (!allocateBufferForPart(partID)) {
                                 // haven't got extra buffer for the partition
                                 if (this.partitionSpillingFlags[partID]) {
                                     spillGroup(groupTupleBuilder, partID);
                                     this.recordsInParts[partID]++;
-                                    this.keysInParts[partID]++;
+                                    this.groupsInParts[partID]++;
                                 } else {
                                     // must be the last partition pinned
                                     if (!this.partitionPinFlags[partID]) {
@@ -445,7 +471,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                                         int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(partID);
                                         spillGroup(groupTupleBuilder, unpinnedPartPicked);
                                         this.recordsInParts[unpinnedPartPicked]++;
-                                        this.keysInParts[unpinnedPartPicked]++;
+                                        this.groupsInParts[unpinnedPartPicked]++;
                                     }
                                 }
                             } else {
@@ -459,7 +485,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                                             "Failed to insert a group into the hash table: the record is too large.");
                                 }
                                 this.recordsInParts[partID]++;
-                                this.keysInParts[partID]++;
+                                this.groupsInParts[partID]++;
                             }
                         }
                         if (useMiniBloomFilter) {
@@ -587,8 +613,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 continue;
             }
             partsInMem++;
-            double currentAbsorptionRatio = (this.keysInParts[i] == 0) ? 0 : this.recordsInParts[i]
-                    / this.keysInParts[i];
+            double currentAbsorptionRatio = (this.groupsInParts[i] == 0) ? 0 : this.recordsInParts[i]
+                    / this.groupsInParts[i];
             if (currentAbsorptionRatio < minAbsorptionRatio) {
                 minAbsorptionRatio = currentAbsorptionRatio;
                 partIDToSpill = i;
@@ -804,6 +830,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             int t1Idx,
             FrameTupleAccessor a2,
             int t2Idx) {
+        debugRequiredCPU++;
         for (int i = 0; i < comparators.length; ++i) {
             int fIdx = keyFields[i];
             int s1 = a1.getTupleStartOffset(t1Idx) + a1.getFieldSlotsLength() + a1.getFieldStartOffset(t1Idx, fIdx);
@@ -820,6 +847,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private boolean lookupBloomFilter(
             int h,
             byte bfByte) {
+        // count each bloom filter as one cpu operation
+        debugRequiredCPU++;
         for (int i = 0; i < HT_BF_PRIME_FUNC_COUNT; i++) {
             int bitIndex = (int) (h >> (12 * i)) & 0x07;
             if (!((bfByte & (1L << bitIndex)) != 0)) {
@@ -848,7 +877,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     @Override
     public void close() throws HyracksDataException {
         // TODO Auto-generated method stub
-
+        dumpAndCleanDebugCounters();
     }
 
     @Override
@@ -872,8 +901,11 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                     }
                     flush(this.partSpillRunWriters[i], GrouperFlushOption.FLUSH_FOR_GROUP_STATE, i);
                 }
+                this.recordsInsertedForParts.add(this.recordsInParts[i]);
             } else {
                 flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE, i);
+                this.recordsInResidentParts += this.recordsInParts[i];
+                this.groupsInResidentParts += this.groupsInParts[i];
             }
             if (this.partSpillRunWriters[i] != null) {
                 runReaders.add(this.partSpillRunWriters[i].createReader());
@@ -883,9 +915,98 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     }
 
     @Override
-    protected void dumpAndCleanDebugCounters() {
-        // TODO Auto-generated method stub
-
+    public List<Long> getOutputRunSizeInRows() throws HyracksDataException {
+        return recordsInsertedForParts;
     }
 
+    @Override
+    public long getRecordsCompletelyAggregated() {
+        return recordsInResidentParts;
+    }
+
+    @Override
+    public long getGroupsCompletelyAggregated() {
+        return groupsInResidentParts;
+    }
+
+    @Override
+    protected void dumpAndCleanDebugCounters() {
+
+        this.debugCounters.updateRequiredCounter(RequiredCounters.CPU, debugRequiredCPU);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IO_OUT_DISK, debugOptionalIODumped);
+
+        this.debugCounters.updateOptionalCustomizedCounter(".io.streamed", debugOptionalIOStreamed);
+        this.debugCounters.updateOptionalCustomizedCounter(".io.dumped", debugOptionalIODumped);
+
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.bloomfilter.update", debugBloomFilterUpdateCounter);
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.bloomfilter.lookup", debugBloomFilterLookupCounter);
+
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.groupsInTable", debugTempGroupsInHashtable);
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.slotsUsed", debugTempUsedSlots);
+
+        this.debugCounters.updateOptionalCustomizedCounter(".bloomfilter.succ", debugBloomFilterSucc);
+        this.debugCounters.updateOptionalCustomizedCounter(".bloomfilter.fail", debugBloomFilterFail);
+
+        debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio,
+                (double) debugTempGroupsInHashtable / (double) debugTempUsedSlots);
+
+        if (debugOptionalMaxHashtableFillRatio > 2) {
+            System.out.println("Bad Hash Table!");
+        }
+
+        this.debugCounters.updateOptionalCustomizedCounter(".hash.maxFillRatio",
+                ((long) debugOptionalMaxHashtableFillRatio * 100));
+
+        this.debugCounters.updateOptionalSortCounter(OptionalSortCounters.CPU_COMPARE, debugOptionalSortCPUCompare);
+        this.debugCounters.updateOptionalSortCounter(OptionalSortCounters.CPU_COPY, debugOptionalSortCPUCopy);
+
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.CPU_COMPARE_HIT, debugOptionalCPUCompareHit);
+        this.debugCounters
+                .updateOptionalHashCounter(OptionalHashCounters.CPU_COMPARE_MISS, debugOptionalCPUCompareMiss);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.CPU_COMPARE, debugOptionalCPUCompareHit
+                + debugOptionalCPUCompareMiss);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.HITS, debugOptionalHashHits);
+        this.debugCounters.updateOptionalHashCounter(OptionalHashCounters.MISSES, debugOptionalHashMisses);
+
+        this.debugCounters.dumpCounters(ctx.getCounterContext());
+
+        this.debugRequiredCPU = 0;
+        this.debugOptionalIODumped = 0;
+        this.debugOptionalIOStreamed = 0;
+        this.debugOptionalSortCPUCompare = 0;
+        this.debugOptionalSortCPUCopy = 0;
+        this.debugOptionalHashHits = 0;
+        this.debugOptionalHashMisses = 0;
+        this.debugOptionalCPUCompareHit = 0;
+        this.debugOptionalCPUCompareMiss = 0;
+        this.debugOptionalMaxHashtableFillRatio = 0;
+        this.debugBloomFilterLookupCounter = 0;
+        this.debugBloomFilterUpdateCounter = 0;
+        this.debugTempCPUCounter = 0;
+        this.debugTempGroupsInHashtable = 0;
+        this.debugTempUsedSlots = 0;
+        this.debugBloomFilterSucc = 0;
+        this.debugBloomFilterFail = 0;
+        this.debugCounters.reset();
+
+        ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);
+        ctx.getCounterContext().getCounter("profile.io.in.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInDisk);
+        ctx.getCounterContext().getCounter("profile.io.in.network." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInNetwork);
+        ctx.getCounterContext().getCounter("profile.io.out.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOOutDisk);
+        ctx.getCounterContext().getCounter("profile.io.out.network." + this.debugCounters.getDebugID(), true)
+                .update(profileIOOutNetwork);
+        ctx.getCounterContext().getCounter("profile.output." + this.debugCounters.getDebugID(), true)
+                .update(profileOutputRecords);
+
+        profileCPU = 0;
+        profileIOInDisk = 0;
+        profileIOInNetwork = 0;
+        profileIOOutDisk = 0;
+        profileIOOutNetwork = 0;
+        profileOutputRecords = 0;
+
+    }
 }

@@ -77,11 +77,19 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
     private long debugOptionalSortCPUCompare = 0, debugOptionalSortCPUCopy = 0, debugOptionalIO = 0;
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
 
-    public SortGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            IAggregatorDescriptorFactory aggregatorFactory, IAggregatorDescriptorFactory mergerFactory,
-            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc,
-            INormalizedKeyComputerFactory firstKeyNormalizerFactory, IBinaryComparatorFactory[] comparatorFactories,
-            IFrameWriter outputWriter, boolean isGenerateRuns) throws HyracksDataException {
+    public SortGrouper(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            IAggregatorDescriptorFactory aggregatorFactory,
+            IAggregatorDescriptorFactory mergerFactory,
+            RecordDescriptor inRecDesc,
+            RecordDescriptor outRecDesc,
+            INormalizedKeyComputerFactory firstKeyNormalizerFactory,
+            IBinaryComparatorFactory[] comparatorFactories,
+            IFrameWriter outputWriter,
+            boolean isGenerateRuns) throws HyracksDataException {
         super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, mergerFactory, inRecDesc, outRecDesc, false,
                 outputWriter, isGenerateRuns);
 
@@ -138,7 +146,8 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         return dataFrameCount;
     }
 
-    public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
+    public void nextFrame(
+            ByteBuffer buffer) throws HyracksDataException {
 
         profileIOInNetwork++;
 
@@ -160,7 +169,8 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
                     flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE);
                 }
                 // reset the data frame count
-                reset();
+                this.dataFrameCount = 0;
+                this.tupleCount = 0;
             }
         }
         copyFrame = buffers.get(dataFrameCount);
@@ -211,7 +221,9 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    private void sort(int offset, int length) {
+    private void sort(
+            int offset,
+            int length) {
         int step = 1;
         int len = length;
         int end = offset + len;
@@ -236,7 +248,11 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
     }
 
     /** Merge two subarrays into one */
-    private void merge(int start1, int start2, int len1, int len2) {
+    private void merge(
+            int start1,
+            int start2,
+            int len1,
+            int len2) {
         int targetPos = start1;
         int pos1 = start1;
         int pos2 = start2;
@@ -265,7 +281,9 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         }
     }
 
-    protected int compare(int tp1, int tp2) {
+    protected int compare(
+            int tp1,
+            int tp2) {
 
         debugOptionalSortCPUCompare++;
         profileCPU++;
@@ -303,7 +321,11 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         return 0;
     }
 
-    protected boolean sameGroup(FrameTupleAccessor a1, int t1Idx, FrameTupleAccessor a2, int t2Idx) {
+    protected boolean sameGroup(
+            FrameTupleAccessor a1,
+            int t1Idx,
+            FrameTupleAccessor a2,
+            int t2Idx) {
         debugOptionalSortCPUCompare++;
         profileCPU++;
         for (int i = 0; i < comparators.length; ++i) {
@@ -319,14 +341,18 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         return true;
     }
 
-    private void copy(int src, int dest) {
+    private void copy(
+            int src,
+            int dest) {
         debugOptionalSortCPUCopy++;
         for (int i = 0; i < POINTER_LENGTH; i++) {
             tPointersTemp[dest * POINTER_LENGTH + i] = tPointers[src * POINTER_LENGTH + i];
         }
     }
 
-    protected void flush(IFrameWriter writer, GrouperFlushOption flushOption) throws HyracksDataException {
+    protected void flush(
+            IFrameWriter writer,
+            GrouperFlushOption flushOption) throws HyracksDataException {
 
         // sort the data before flushing
         sortFrames();
@@ -414,7 +440,10 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         this.outFrame = null;
     }
 
-    private void writeOutput(FrameTupleAccessor lastTupleAccessor, int lastTupleIndex, IFrameWriter writer,
+    private void writeOutput(
+            FrameTupleAccessor lastTupleAccessor,
+            int lastTupleIndex,
+            IFrameWriter writer,
             boolean useFinalMerger) throws HyracksDataException {
 
         if (appender == null) {
@@ -500,5 +529,23 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         profileIOInNetwork = 0;
         profileIOOutDisk = 0;
         profileIOOutNetwork = 0;
+    }
+
+    @Override
+    public List<Long> getOutputRunSizeInRows() throws HyracksDataException {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public long getRecordsCompletelyAggregated() {
+        // TODO Auto-generated method stub
+        return 0;
+    }
+
+    @Override
+    public long getGroupsCompletelyAggregated() {
+        // TODO Auto-generated method stub
+        return 0;
     }
 }
