@@ -55,6 +55,11 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
     private final boolean useDynamicDestaging;
 
+    /**
+     * whether to further partition resident partitions
+     */
+    private final boolean enableResidentPart;
+
     private final IFrameWriter outputWriter;
 
     private final int hashLevelSeed;
@@ -90,7 +95,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             RecordDescriptor outRecordDescriptor,
             int hashLevelSeed,
             IFrameWriter outputWriter,
-            boolean useDynamic) throws HyracksDataException {
+            boolean useDynamic,
+            boolean enableResidentPart) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -115,6 +121,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         this.fudgeFactor = fudgeFactor;
 
         this.useDynamicDestaging = useDynamic;
+        this.enableResidentPart = enableResidentPart;
 
         this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
                 + "." + String.valueOf(Thread.currentThread().getId()));
@@ -161,7 +168,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                 grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                         this.firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                         finalMergerFactory, inRecordDesc, outRecordDesc, false, outputWriter, true, tableSize,
-                        hybridHashSpilledPartitions, hybridHashResidentPartitions, true, false, true);
+                        hybridHashSpilledPartitions, hybridHashResidentPartitions, true, false, true,
+                        enableResidentPart);
             }
         }
         grouper.open();
@@ -357,7 +365,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                             firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                             partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter, true, tableSize,
                             runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition), true, false,
-                            true);
+                            true, enableResidentPart);
                 }
                 originalRunsCount--;
             } else {
@@ -371,7 +379,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
                             true, tableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
-                                    runPartition), true, false, true);
+                                    runPartition), true, false, true, enableResidentPart);
                 }
             }
 

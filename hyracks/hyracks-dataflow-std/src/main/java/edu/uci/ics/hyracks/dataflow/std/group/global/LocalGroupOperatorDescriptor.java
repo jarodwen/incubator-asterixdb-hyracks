@@ -363,7 +363,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
-                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, false);
+                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, false,
+                                enableResidentPart);
                         break;
                     case PRECLUSTER:
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
@@ -385,7 +386,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
-                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, true);
+                                partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, true,
+                                enableResidentPart);
                         break;
                     case SORT_GROUP_MERGE_GROUP:
                     default:
