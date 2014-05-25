@@ -272,4 +272,10 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
         return 0;
     }
 
+    @Override
+    public List<Long> getOutputGroupsInRows() throws HyracksDataException {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
 }

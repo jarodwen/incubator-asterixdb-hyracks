@@ -46,6 +46,13 @@ public interface IFrameWriterRunGenerator extends IFrameWriter {
     List<Long> getOutputRunSizeInRows() throws HyracksDataException;
 
     /**
+     * Get the number of groups (estimated) in each output run file.
+     * @return
+     * @throws HyracksDataException
+     */
+    List<Long> getOutputGroupsInRows() throws HyracksDataException;
+
+    /**
      * Get the number of rows those are fully aggregated (for the given input partition, but not necessarily for the
      * global aggregation result).
      * 

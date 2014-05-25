@@ -106,6 +106,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
     private final GroupAlgorithms algorithm;
 
+    private final boolean enableResidentPart;
+
     private final int groupStateSizeInBytes;
     private final double fudgeFactor;
 
@@ -177,7 +179,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             RecordDescriptor outRecDesc,
             GroupAlgorithms algorithm,
             int levelSeed,
-            boolean bloomfilterHash) throws HyracksDataException {
+            boolean bloomfilterHash,
+            boolean enableResidentPart) throws HyracksDataException {
         super(spec, 1, 1);
         this.framesLimit = framesLimit;
         this.useBloomfilterForHashtable = bloomfilterHash;
@@ -200,6 +203,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
+        this.enableResidentPart = enableResidentPart;
     }
 
     /**
@@ -350,7 +354,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
                                 RecursiveHybridHashGrouper.computeHybridHashResidentPartitions(framesLimit, 1), true,
-                                false, true);
+                                false, true, enableResidentPart);
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
@@ -371,7 +375,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
                         grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
-                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1, true,
+                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 2, true,
                                 false, true);
                         break;
                     case DYNAMIC_HYBRID_HASH_REDUCE:
