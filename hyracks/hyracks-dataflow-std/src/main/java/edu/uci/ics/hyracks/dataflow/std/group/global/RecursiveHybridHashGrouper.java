@@ -60,6 +60,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
      */
     private final boolean enableResidentPart;
 
+    private final boolean useBloomfilter;
+
     private final IFrameWriter outputWriter;
 
     private final int hashLevelSeed;
@@ -96,7 +98,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             int hashLevelSeed,
             IFrameWriter outputWriter,
             boolean useDynamic,
-            boolean enableResidentPart) throws HyracksDataException {
+            boolean enableResidentPart,
+            boolean useBloomfilter) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -122,6 +125,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
         this.useDynamicDestaging = useDynamic;
         this.enableResidentPart = enableResidentPart;
+        this.useBloomfilter = useBloomfilter;
 
         this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
                 + "." + String.valueOf(Thread.currentThread().getId()));
@@ -185,6 +189,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
      * @param groupStateSizeInBytes
      * @param fudgeFactor
      * @return
+     * @throws HyracksDataException
      */
     public static int computeGracePartitions(
             int framesLimit,
@@ -192,7 +197,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             long outputGroupCount,
             int groupStateSizeInBytes,
             double fudgeFactor,
-            int minPartitions) {
+            int minPartitions) throws HyracksDataException {
         int minGracePartitions = 1;
 
         while (computeHybridHashSpilledPartitions(framesLimit, frameSize, outputGroupCount, groupStateSizeInBytes,
@@ -210,11 +215,13 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             int groupStateSizeInBytes,
             int gracePartitions,
             double fudgeFactor,
-            int minPartitions) {
+            int minPartitions) throws HyracksDataException {
         double partitionGroupSizeInFrames = (double) outputGroupCount / gracePartitions * groupStateSizeInBytes
                 / frameSize;
-        return (int) Math.max(minPartitions,
+        int parts = (int) Math.max(minPartitions,
                 Math.ceil((partitionGroupSizeInFrames * fudgeFactor - framesLimit) / (framesLimit - 2)));
+
+        return parts;
     }
 
     public static int computeHybridHashResidentPartitions(
@@ -353,19 +360,25 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid." + runLevel + "." + runIdx
                     + ".partitions", runPartition);
 
+            int newTableSize = LocalGroupOperatorDescriptor.computeHashtableSlots(framesLimit - 1, frameSize,
+                    groupStateSizeInBytes, LocalGroupOperatorDescriptor.HT_SLOT_CAP_RATIO,
+                    LocalGroupOperatorDescriptor.HT_FRAME_REF_SIZE, LocalGroupOperatorDescriptor.HT_TUPLE_REF_SIZE,
+                    this.useBloomfilter, LocalGroupOperatorDescriptor.HT_MINI_BLOOM_FILTER_SIZE, framesLimit,
+                    runPartition);
+
             IFrameWriterRunGenerator hybridHashGrouper;
             if (isRawData && originalRunsCount > 0) {
                 if (useDynamicDestaging) {
                     hybridHashGrouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFieldsInGroupState,
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             aggregatorFactory, partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter,
-                            true, tableSize, runPartition, true, false, true);
+                            true, newTableSize, runPartition, this.useBloomfilter, false, true);
                 } else {
                     hybridHashGrouper = new HybridHashGrouper(ctx, keyFields, decorFieldsInGroupState, framesLimit,
                             firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
-                            partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter, true, tableSize,
-                            runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition), true, false,
-                            true, enableResidentPart);
+                            partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter, true, newTableSize,
+                            runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition),
+                            this.useBloomfilter, false, true, enableResidentPart);
                 }
                 originalRunsCount--;
             } else {
@@ -373,12 +386,12 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                     hybridHashGrouper = new DynamicHybridHashGrouper(ctx, keyFieldsInGroupState,
                             decorFieldsInGroupState, framesLimit, firstKeyNormalizerFactory, comparatorFactories,
                             hashFunctionFactories, partialMergerFactory, finalMergerFactory, outRecordDesc,
-                            outRecordDesc, true, outputWriter, true, tableSize, runPartition, true, false, true);
+                            outRecordDesc, true, outputWriter, true, newTableSize, runPartition, true, false, true);
                 } else {
                     hybridHashGrouper = new HybridHashGrouper(ctx, keyFieldsInGroupState, decorFieldsInGroupState,
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
-                            true, tableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
+                            true, newTableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
                                     runPartition), true, false, true, enableResidentPart);
                 }
             }

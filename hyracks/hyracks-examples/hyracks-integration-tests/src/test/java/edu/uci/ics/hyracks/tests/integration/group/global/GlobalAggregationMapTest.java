@@ -74,14 +74,15 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
     
     private final boolean enableResidentPart = false;
     
-    private final int inputDataOption = 0;
+    private final int inputDataOption = 3;
 
     final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
             new FileSplit[] { new FileSplit(
                     NC1_ID,
                     new FileReference(
                             new File(
-                                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
+                                    "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
+                                    //"/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
 
     final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
             UTF8StringSerializerDeserializer.INSTANCE, DoubleSerializerDeserializer.INSTANCE });
@@ -100,7 +101,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
             .of(UTF8StringPointable.FACTORY) };
     final IBinaryHashFunctionFamily[] hashFactories = new IBinaryHashFunctionFamily[] { MurmurHash3BinaryHashFunctionFamily.INSTANCE };
 
-    LocalGroupOperatorDescriptor.GroupAlgorithms localGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.SIMPLE_HYBRID_HASH;
+    LocalGroupOperatorDescriptor.GroupAlgorithms localGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.DYNAMIC_HYBRID_HASH_MAP;
     LocalGroupOperatorDescriptor.GroupAlgorithms globalGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.RECURSIVE_HYBRID_HASH;
 
     private AbstractSingleActivityOperatorDescriptor getPrinter(

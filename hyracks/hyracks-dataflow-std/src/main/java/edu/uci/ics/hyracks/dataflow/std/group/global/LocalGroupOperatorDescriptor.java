@@ -83,7 +83,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
      */
     public static final int HT_MINI_BLOOM_FILTER_SIZE = 1;
 
-    private static final double hashtableSlotCapRatio = 1.0;
+    public static final double HT_SLOT_CAP_RATIO = 1.0;
 
     private final int framesLimit, levelSeed;
 
@@ -223,7 +223,9 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             int bytesForFrameReference,
             int bytesForTupleReference,
             boolean useMiniBloomfilter,
-            int bytesForMiniBloomfilter) {
+            int bytesForMiniBloomfilter,
+            int framesLimit,
+            int expectedMaxOutputBuffer) {
         int headerRefSize = (useMiniBloomfilter ? bytesForMiniBloomfilter : 0) + bytesForFrameReference
                 + bytesForTupleReference;
         int hashtableEntrySize = recordSize + bytesForFrameReference + bytesForTupleReference;
@@ -233,6 +235,11 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         int headerPages = (int) Math.ceil(framesForHashtable * entryPerFrame
                 / (headerRefPerFrame / htSlotRatio + entryPerFrame));
 
+        // The number of header pages should be at most the remaining pages, which should exclude
+        // the pages as output buffers, and also at least one page for the hash table contents, and the
+        // possibly 1 page introduced when adjusting the table size as below
+        headerPages = Math.min(headerPages, framesLimit - expectedMaxOutputBuffer - 2);
+
         int slots = headerPages * headerRefPerFrame;
 
         int numsToCheck = (int) Math.min(slots * 0.01, 1000);
@@ -241,7 +248,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         for (int i = (slots % 2 == 0) ? 0 : 1; i < numsToCheck; i = i + 2) {
             candidates.set(i, false);
         }
-        for (int i = 3; i < 1000; i = i + 2) {
+        int slotsForOneFrame = frameSize / (headerRefSize);
+        for (int i = 3; i < slotsForOneFrame; i = i + 2) {
             int nextBit = candidates.nextSetBit(0);
             while (nextBit >= 0) {
                 if ((slots + nextBit) % i == 0) {
@@ -332,24 +340,24 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case HASH_GROUP:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
-                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 1);
                         grouper = new HashGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize,
                                 comparatorFactories, hashFunctionFactories, firstNormalizerFactory);
                         break;
                     case HASH_GROUP_SORT_MERGE_GROUP:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
-                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 1);
                         grouper = new HashGroupSortMergeGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, writer);
                         break;
                     case SIMPLE_HYBRID_HASH:
                         tableSize = computeHashtableSlots(framesLimit - 2, frameSize, groupStateSizeInBytes,
-                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
-                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 1);
                         grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
@@ -358,13 +366,13 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
-                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 1);
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, false,
-                                enableResidentPart);
+                                enableResidentPart, useBloomfilterForHashtable);
                         break;
                     case PRECLUSTER:
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
@@ -372,8 +380,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case DYNAMIC_HYBRID_HASH_MAP:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
-                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 2);
                         grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 2, true,
@@ -381,13 +389,13 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case DYNAMIC_HYBRID_HASH_REDUCE:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                hashtableSlotCapRatio, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE,
-                                useBloomfilterForHashtable, HT_MINI_BLOOM_FILTER_SIZE);
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 2);
                         grouper = new RecursiveHybridHashGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, true,
-                                enableResidentPart);
+                                enableResidentPart, useBloomfilterForHashtable);
                         break;
                     case SORT_GROUP_MERGE_GROUP:
                     default:

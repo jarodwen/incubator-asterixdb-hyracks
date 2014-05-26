@@ -289,6 +289,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
         this.frameManager = new FrameMemManager(framesLimit, ctx);
         this.hashtableOutputBuffer = frameManager.allocateFrame();
+
+        // Reserve one frame for each partition
+        for (int i = 0; i < this.numParts; i++) {
+            this.partitionBuffers[i] = frameManager.allocateFrame();
+            if (this.partitionBuffers[i] < 0) {
+                throw new HyracksDataException("Not enough memory for " + this.numParts + " partitions.");
+            }
+        }
     }
 
     /*
@@ -401,7 +409,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 if (this.partitionPinFlags[partID]) {
                     // partition has been pinned, then it will be partitioned
                     // into other non-pinned spilled partitions
-                    spillPartID = getUnpinnedSpilledPartIDForSpilling(partID);
+                    throw new HyracksDataException("Should not reach this right now!");
+                    // spillPartID = getUnpinnedSpilledPartIDForSpilling(htSlotID);
                 }
 
                 this.groupTupleBuilder.reset();
@@ -417,8 +426,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
 
                 spillGroup(groupTupleBuilder, spillPartID);
-                this.recordsInParts[partID]++;
-                this.groupsInParts[partID]++;
+                this.recordsInParts[spillPartID]++;
+                this.groupsInParts[spillPartID]++;
             } else {
                 // The partition is not spilled: try to find a match first
                 if (findMatch(inputFrameTupleAccessor, tupleIndex, rawHashValue, htSlotID)) {
@@ -445,60 +454,65 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
                     aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
 
-                    if (this.isHashtableFull && this.partitionPinFlags[partID]) {
-                        // partition is pinned: need to flush this record
-                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(partID);
+                    if (this.isHashtableFull) {
+                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(htSlotID);
                         spillGroup(groupTupleBuilder, unpinnedPartPicked);
                         this.recordsInParts[unpinnedPartPicked]++;
                         this.groupsInParts[unpinnedPartPicked]++;
                     } else {
+
+                        boolean isInsertedResidentPart = true;
                         // try to insert a new entry
                         getHTSlotPointer(htSlotID);
                         if (this.partitionBuffers[partID] >= 0) {
                             hashtableFrameTupleAppender.reset(frameManager.getFrame(this.partitionBuffers[partID]),
                                     false);
                         }
-                        if (this.partitionBuffers[partID] < 0
+                        while (this.partitionBuffers[partID] < 0
                                 || !hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
                                         groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(),
                                         htLookupFrameIndex, htLookupTupleIndex)) {
 
-                            // The inserting partition does not have a buffer: try to allocate one
-                            if (!allocateBufferForPart(partID)) {
-                                // haven't got extra buffer for the partition
-                                if (this.partitionSpillingFlags[partID]) {
-                                    spillGroup(groupTupleBuilder, partID);
-                                    this.recordsInParts[partID]++;
-                                    this.groupsInParts[partID]++;
-                                } else {
-                                    // must be the last partition pinned
-                                    if (!this.partitionPinFlags[partID]) {
-                                        throw new HyracksDataException(
-                                                "Should not reach: partition is not pinned, but no extra frame can be allocated for it, nor it can be spilled");
-                                    } else {
-                                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(partID);
-                                        spillGroup(groupTupleBuilder, unpinnedPartPicked);
-                                        this.recordsInParts[unpinnedPartPicked]++;
-                                        this.groupsInParts[unpinnedPartPicked]++;
-                                    }
-                                }
-                            } else {
-
-                                hashtableFrameTupleAppender.reset(frameManager.getFrame(this.partitionBuffers[partID]),
-                                        true);
-                                if (!hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
-                                        groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(),
-                                        htLookupFrameIndex, htLookupTupleIndex)) {
-                                    throw new HyracksDataException(
-                                            "Failed to insert a group into the hash table: the record is too large.");
-                                }
+                            boolean isAllocated = allocateBufferForPart(partID);
+                            if (this.partitionSpillingFlags[partID]) {
+                                spillGroup(groupTupleBuilder, partID);
                                 this.recordsInParts[partID]++;
                                 this.groupsInParts[partID]++;
+                                isInsertedResidentPart = false;
+                                break;
+                            } else {
+                                if (!isAllocated) {
+                                    // must be the last partition pinned
+                                    if (this.isHashtableFull) {
+                                        if (this.partitionPinFlags[partID]
+                                                && this.unpinnedSpilledParts.size() == this.numParts - 1
+                                                && !this.partitionSpillingFlags[partID]) {
+                                            int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(htSlotID);
+                                            spillGroup(groupTupleBuilder, unpinnedPartPicked);
+                                            this.recordsInParts[unpinnedPartPicked]++;
+                                            this.groupsInParts[unpinnedPartPicked]++;
+                                            isInsertedResidentPart = false;
+                                            break;
+                                        } else {
+                                            throw new HyracksDataException(
+                                                    "Should not reach: no available memory for insertion, and the partition is not spilled.");
+                                        }
+                                    }
+                                } else {
+                                    hashtableFrameTupleAppender.reset(
+                                            frameManager.getFrame(this.partitionBuffers[partID]), false);
+                                }
                             }
                         }
-                        if (useMiniBloomFilter) {
-                            bloomFilterByte = insertIntoBloomFilter(rawHashValue, bloomFilterByte,
-                                    (htLookupFrameIndex < 0));
+                        if (isInsertedResidentPart) {
+                            // successfully inserted
+                            if (useMiniBloomFilter) {
+                                bloomFilterByte = insertIntoBloomFilter(rawHashValue, bloomFilterByte,
+                                        (htLookupFrameIndex < 0));
+                            }
+
+                            this.recordsInParts[partID]++;
+                            this.groupsInParts[partID]++;
                         }
 
                         // reset the header reference
@@ -609,11 +623,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             }
         }
 
-        if (newFrameID >= 0) {
+        if (!this.partitionSpillingFlags[partID] && newFrameID >= 0) {
             frameManager.setNextFrame(newFrameID, this.partitionBuffers[partID]);
             this.partitionBuffers[partID] = newFrameID;
             return true;
         } else {
+            if (this.unpinnedSpilledParts.size() == this.numParts - 1) {
+                this.isHashtableFull = true;
+            }
             return false;
         }
     }
@@ -672,18 +689,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private int getUnpinnedSpilledPartIDForSpilling(
             int partID) throws HyracksDataException {
         if (this.unpinnedSpilledParts.size() == 0) {
-            // right now at most one partition can be pinned
-            int pinnedParts = 0;
-            for (int i = 0; i < this.numParts; i++) {
-                if (this.partitionPinFlags[i]) {
-                    pinnedParts++;
-                }
-            }
-            if (pinnedParts > 1) {
-                throw new HyracksDataException("More than one partition is pinned!");
-            } else {
-                return partID;
-            }
+            throw new HyracksDataException("Should not reach this!");
         }
         int unpinnedPartIDInList = partID % this.unpinnedSpilledParts.size();
         return this.unpinnedSpilledParts.get(unpinnedPartIDInList);
@@ -948,6 +954,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
     @Override
     public void wrapup() throws HyracksDataException {
+        // process spilled partitions
         for (int i = 0; i < numParts; i++) {
             if (this.partitionSpillingFlags[i]) {
                 // simply flush the output buffer for the partition
@@ -968,7 +975,12 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 } else {
                     flush(outputWriter, GrouperFlushOption.FLUSH_FOR_GROUP_STATE, i);
                 }
-            } else {
+            }
+        }
+
+        // process resident partitions
+        for (int i = 0; i < numParts; i++) {
+            if (!this.partitionSpillingFlags[i]) {
                 flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE, i);
                 this.recordsInResidentParts += this.recordsInParts[i];
                 this.groupsInResidentParts += this.groupsInParts[i];
