@@ -207,16 +207,6 @@ public class GlobalGroupBenchmarkingClient {
         return fSplits;
     }
 
-    private static List<String> parseJarPaths(
-            String jarPaths) {
-        List<String> paths = new LinkedList<String>();
-        String[] splits = jarPaths.split(",");
-        for (int i = 0; i < splits.length; i++) {
-            paths.add(splits[i].trim());
-        }
-        return paths;
-    }
-
     private static JobSpecification createJob(
             FileSplit[] inSplits,
             FileSplit[] outSplits,
@@ -290,6 +280,12 @@ public class GlobalGroupBenchmarkingClient {
                         new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc, selectedAlg, 0,
                 useBloomfilter, enableResidentPart);
 
+        createPartitionConstraint(spec, grouper, inSplits);
+
+        IConnectorDescriptor conn0 = new OneToOneConnectorDescriptor(spec);
+
+        spec.connect(conn0, csvScanner, 0, grouper, 0);
+        
         IFileSplitProvider outSplitProvider = new ConstantFileSplitProvider(outSplits);
 
         AbstractSingleActivityOperatorDescriptor writer = new PlainFileWriterOperatorDescriptor(spec, outSplitProvider,
