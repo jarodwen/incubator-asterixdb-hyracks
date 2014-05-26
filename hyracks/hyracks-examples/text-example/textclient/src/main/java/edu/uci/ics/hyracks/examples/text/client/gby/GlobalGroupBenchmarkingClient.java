@@ -15,6 +15,8 @@
 package edu.uci.ics.hyracks.examples.text.client.gby;
 
 import java.io.File;
+import java.util.LinkedList;
+import java.util.List;
 
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
@@ -111,6 +113,9 @@ public class GlobalGroupBenchmarkingClient {
         @Option(name = "-run-times", usage = "The number of runs for benchmarking", required = false)
         public int runTimes = 3;
 
+        @Option(name = "-jar", usage = "The jar file paths (separated by comma) to be deployed", required = true)
+        public String jarPaths;
+
     }
 
     private static final int[] keyFields = new int[] { 0 };
@@ -139,6 +144,8 @@ public class GlobalGroupBenchmarkingClient {
         parser.parseArgument(args);
 
         IHyracksClientConnection hcc = new HyracksConnection(options.host, options.port);
+
+        hcc.deployBinary(parseJarPaths(options.jarPaths));
 
         JobSpecification job;
 
@@ -187,6 +194,16 @@ public class GlobalGroupBenchmarkingClient {
                     + count)));
         }
         return fSplits;
+    }
+
+    private static List<String> parseJarPaths(
+            String jarPaths) {
+        List<String> paths = new LinkedList<String>();
+        String[] splits = jarPaths.split(",");
+        for (int i = 0; i < splits.length; i++) {
+            paths.add(splits[i].trim());
+        }
+        return paths;
     }
 
     private static JobSpecification createJob(

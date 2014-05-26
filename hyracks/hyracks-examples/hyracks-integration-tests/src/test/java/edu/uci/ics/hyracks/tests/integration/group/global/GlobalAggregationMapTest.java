@@ -74,15 +74,15 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
     
     private final boolean enableResidentPart = false;
     
-    private final int inputDataOption = 3;
+    private final int inputDataOption = 0;
 
     final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
             new FileSplit[] { new FileSplit(
                     NC1_ID,
                     new FileReference(
                             new File(
-                                    "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
-                                    //"/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
+                                    //"/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
+                                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
 
     final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
             UTF8StringSerializerDeserializer.INSTANCE, DoubleSerializerDeserializer.INSTANCE });
@@ -102,7 +102,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
     final IBinaryHashFunctionFamily[] hashFactories = new IBinaryHashFunctionFamily[] { MurmurHash3BinaryHashFunctionFamily.INSTANCE };
 
     LocalGroupOperatorDescriptor.GroupAlgorithms localGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.DYNAMIC_HYBRID_HASH_MAP;
-    LocalGroupOperatorDescriptor.GroupAlgorithms globalGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.DYNAMIC_HYBRID_HASH_REDUCE;
+    LocalGroupOperatorDescriptor.GroupAlgorithms globalGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.HASH_GROUP_SORT_MERGE_GROUP;
 
     private AbstractSingleActivityOperatorDescriptor getPrinter(
             JobSpecification spec,
@@ -178,7 +178,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
 
         spec.connect(conn1, grouper0, 0, grouper1, 0);
 
-        AbstractSingleActivityOperatorDescriptor printer = getPrinter(spec, "global_" + localGrouper.name() + "_"
+        AbstractSingleActivityOperatorDescriptor printer = getPrinter(spec, "mr_" + localGrouper.name() + "_"
                 + globalGrouper.name() + "_nokey");
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, printer, NC1_ID);

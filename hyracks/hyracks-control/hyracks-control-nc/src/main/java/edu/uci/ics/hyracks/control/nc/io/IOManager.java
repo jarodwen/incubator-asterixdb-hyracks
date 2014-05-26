@@ -143,6 +143,7 @@ public class IOManager implements IIOManager {
     public void close(IFileHandle fHandle) throws HyracksDataException {
         try {
             ((FileHandle) fHandle).close();
+            ((FileHandle) fHandle).getFileReference().getFile().delete();
         } catch (IOException e) {
             throw new HyracksDataException(e);
         }
