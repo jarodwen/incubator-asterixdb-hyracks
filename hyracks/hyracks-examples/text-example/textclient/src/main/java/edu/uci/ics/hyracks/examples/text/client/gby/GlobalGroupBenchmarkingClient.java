@@ -15,6 +15,9 @@
 package edu.uci.ics.hyracks.examples.text.client.gby;
 
 import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -114,9 +117,6 @@ public class GlobalGroupBenchmarkingClient {
         @Option(name = "-run-times", usage = "The number of runs for benchmarking", required = false)
         public int runTimes = 3;
 
-        @Option(name = "-jar", usage = "The jar file paths (separated by comma) to be deployed", required = true)
-        public String jarPaths;
-
     }
 
     private static final int[] keyFields = new int[] { 0 };
@@ -146,7 +146,17 @@ public class GlobalGroupBenchmarkingClient {
 
         IHyracksClientConnection hcc = new HyracksConnection(options.host, options.port);
 
-        DeploymentId deployID = hcc.deployBinary(parseJarPaths(options.jarPaths));
+        URLClassLoader classLoader = (URLClassLoader) GlobalGroupBenchmarkingClient.class.getClassLoader();
+        List<String> jars = new ArrayList<String>();
+        URL[] urls = classLoader.getURLs();
+        for (URL url : urls) {
+            if (url.toString().endsWith(".jar")) {
+                System.out.println("[INFO] Deploying jar: " + url.toString());
+                jars.add(new File(url.getPath()).getAbsolutePath());
+            }
+        }
+
+        DeploymentId deployID = hcc.deployBinary(jars);
 
         JobSpecification job;
 
