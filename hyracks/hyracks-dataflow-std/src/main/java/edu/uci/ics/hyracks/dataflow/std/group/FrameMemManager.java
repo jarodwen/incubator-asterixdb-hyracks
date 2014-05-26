@@ -18,6 +18,7 @@ import java.nio.ByteBuffer;
 
 import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
 import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
+import edu.uci.ics.hyracks.dataflow.common.comm.util.FrameUtils;
 
 public class FrameMemManager {
 
@@ -35,7 +36,9 @@ public class FrameMemManager {
 
     public static final int INVALID_FRAME_ID = -1;
 
-    public FrameMemManager(int memCapacity, IHyracksTaskContext ctx) {
+    public FrameMemManager(
+            int memCapacity,
+            IHyracksTaskContext ctx) {
         this.frames = new ByteBuffer[memCapacity];
         this.framesNext = new int[memCapacity];
         this.freeFrame = 0;
@@ -70,8 +73,10 @@ public class FrameMemManager {
             frames[newFrameIdx].clear();
             frames[newFrameIdx].putInt(frames[newFrameIdx].array().length - INT_SIZE, 0);
         }
-        if (newFrameIdx >= 0)
+        if (newFrameIdx >= 0) {
             framesAvailable[newFrameIdx] = false;
+            framesNext[newFrameIdx] = -1;
+        }
         return newFrameIdx;
     }
 
@@ -81,7 +86,8 @@ public class FrameMemManager {
      * @param framesCount
      * @return
      */
-    public int bulkAllocate(int framesCount) {
+    public int bulkAllocate(
+            int framesCount) {
         int prevFrameIdx = allocateFrame();
         framesNext[prevFrameIdx] = INVALID_FRAME_ID;
         int currentFrameIdx = prevFrameIdx;
@@ -108,7 +114,8 @@ public class FrameMemManager {
      * @param frameId
      * @return
      */
-    public int getNextFrame(int frameIdx) {
+    public int getNextFrame(
+            int frameIdx) {
 
         if (frameIdx < 0 || frameIdx > frames.length - 1) {
             return INVALID_FRAME_ID;
@@ -123,11 +130,14 @@ public class FrameMemManager {
      * @param frameIdx
      * @param nextFrameIdx
      */
-    public void setNextFrame(int frameIdx, int nextFrameIdx) {
+    public void setNextFrame(
+            int frameIdx,
+            int nextFrameIdx) {
         framesNext[frameIdx] = nextFrameIdx;
     }
 
-    public boolean isFrameInitialized(int frameIdx) {
+    public boolean isFrameInitialized(
+            int frameIdx) {
         return frames[frameIdx] != null;
     }
 
@@ -138,7 +148,8 @@ public class FrameMemManager {
      * @return
      * @throws HyracksDataException
      */
-    public ByteBuffer getFrame(int frameIdx) throws HyracksDataException {
+    public ByteBuffer getFrame(
+            int frameIdx) throws HyracksDataException {
         if (frameIdx < 0 || frameIdx > frames.length - 1) {
             return null;
         }
@@ -149,7 +160,8 @@ public class FrameMemManager {
         return frames[frameIdx];
     }
 
-    public void recycleFrame(int frameIdx) {
+    public void recycleFrame(
+            int frameIdx) {
         if (frameIdx < 0 || frameIdx > frames.length - 1) {
             // if the index is out of range, do nothing
             return;
@@ -167,7 +179,8 @@ public class FrameMemManager {
         resetFrame(frameIdx);
     }
 
-    public void resetFrame(int frameIdx) {
+    public void resetFrame(
+            int frameIdx) {
         // reset the frame content, if any
         if (frames[frameIdx] != null) {
             frames[frameIdx].clear();

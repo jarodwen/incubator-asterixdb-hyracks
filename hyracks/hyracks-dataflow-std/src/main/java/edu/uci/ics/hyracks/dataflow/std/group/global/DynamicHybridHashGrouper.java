@@ -14,6 +14,10 @@
  */
 package edu.uci.ics.hyracks.dataflow.std.group.global;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutput;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.List;
@@ -31,7 +35,9 @@ import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
 import edu.uci.ics.hyracks.dataflow.common.comm.io.ArrayTupleBuilder;
 import edu.uci.ics.hyracks.dataflow.common.comm.io.FrameTupleAccessor;
 import edu.uci.ics.hyracks.dataflow.common.comm.io.FrameTupleAppender;
+import edu.uci.ics.hyracks.dataflow.common.comm.util.ByteBufferInputStream;
 import edu.uci.ics.hyracks.dataflow.common.comm.util.FrameUtils;
+import edu.uci.ics.hyracks.dataflow.common.data.marshalling.UTF8StringSerializerDeserializer;
 import edu.uci.ics.hyracks.dataflow.common.data.partition.FieldHashPartitionComputerFactory;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileWriter;
 import edu.uci.ics.hyracks.dataflow.std.group.AggregateState;
@@ -395,9 +401,11 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT, tupleCount);
 
         for (int tupleIndex = 0; tupleIndex < tupleCount; tupleIndex++) {
+
             int rawHashValue = rawTuplePartitionComputer
                     .partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
             int htSlotID = rawHashValue % this.tableSize;
+
             /**
              * Need to partition data based on their hash table slot id, so that different groups having
              * the same hash table slot id will in the same partition.
@@ -500,7 +508,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                                     }
                                 } else {
                                     hashtableFrameTupleAppender.reset(
-                                            frameManager.getFrame(this.partitionBuffers[partID]), false);
+                                            frameManager.getFrame(this.partitionBuffers[partID]), true);
                                 }
                             }
                         }
@@ -511,14 +519,15 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                                         (htLookupFrameIndex < 0));
                             }
 
+                            // reset the header reference
+                            setHTSlotPointer(htSlotID, bloomFilterByte, this.partitionBuffers[partID],
+                                    hashtableFrameTupleAppender.getTupleCount() - 1);
+                            debugTempGroupsInHashtable++;
+
                             this.recordsInParts[partID]++;
                             this.groupsInParts[partID]++;
                         }
 
-                        // reset the header reference
-                        setHTSlotPointer(htSlotID, bloomFilterByte, this.partitionBuffers[partID],
-                                hashtableFrameTupleAppender.getTupleCount() - 1);
-                        debugTempGroupsInHashtable++;
                     }
                 }
             }
@@ -837,6 +846,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         if (!this.partitionSpillingFlags[partitionIndex]) {
             this.partitionSpillingFlags[partitionIndex] = true;
             this.partitionOutputBuffers[partitionIndex] = prevFrameID;
+            this.frameManager.resetFrame(this.partitionOutputBuffers[partitionIndex]);
             this.partitionBuffers[partitionIndex] = -1;
             if (!this.partitionPinFlags[partitionIndex]) {
                 this.unpinnedSpilledParts.add(partitionIndex);

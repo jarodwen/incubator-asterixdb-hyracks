@@ -102,7 +102,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
     final IBinaryHashFunctionFamily[] hashFactories = new IBinaryHashFunctionFamily[] { MurmurHash3BinaryHashFunctionFamily.INSTANCE };
 
     LocalGroupOperatorDescriptor.GroupAlgorithms localGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.DYNAMIC_HYBRID_HASH_MAP;
-    LocalGroupOperatorDescriptor.GroupAlgorithms globalGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.RECURSIVE_HYBRID_HASH;
+    LocalGroupOperatorDescriptor.GroupAlgorithms globalGrouper = LocalGroupOperatorDescriptor.GroupAlgorithms.DYNAMIC_HYBRID_HASH_REDUCE;
 
     private AbstractSingleActivityOperatorDescriptor getPrinter(
             JobSpecification spec,
