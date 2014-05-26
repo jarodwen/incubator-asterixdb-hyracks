@@ -30,6 +30,7 @@ import edu.uci.ics.hyracks.api.dataflow.value.IBinaryComparatorFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFamily;
 import edu.uci.ics.hyracks.api.dataflow.value.ISerializerDeserializer;
 import edu.uci.ics.hyracks.api.dataflow.value.RecordDescriptor;
+import edu.uci.ics.hyracks.api.deployment.DeploymentId;
 import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
 import edu.uci.ics.hyracks.api.io.FileReference;
 import edu.uci.ics.hyracks.api.job.JobId;
@@ -145,7 +146,7 @@ public class GlobalGroupBenchmarkingClient {
 
         IHyracksClientConnection hcc = new HyracksConnection(options.host, options.port);
 
-        hcc.deployBinary(parseJarPaths(options.jarPaths));
+        DeploymentId deployID = hcc.deployBinary(parseJarPaths(options.jarPaths));
 
         JobSpecification job;
 
@@ -158,7 +159,7 @@ public class GlobalGroupBenchmarkingClient {
 
             System.out.print(i + "\t" + (System.currentTimeMillis() - start));
             start = System.currentTimeMillis();
-            JobId jobId = hcc.startJob(job);
+            JobId jobId = hcc.startJob(deployID, job);
             hcc.waitForCompletion(jobId);
             System.out.println("\t" + (System.currentTimeMillis() - start));
         }
