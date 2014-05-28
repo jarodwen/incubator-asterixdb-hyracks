@@ -75,9 +75,12 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
     private final boolean enableResidentPart = false;
 
     final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
-            new FileSplit[] { new FileSplit(NC1_ID, new FileReference(new File(
-                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
-    // "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
+            new FileSplit[] { new FileSplit(
+                    NC1_ID,
+                    new FileReference(
+                            new File(
+                            // "/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
+                                    "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
 
     final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
             UTF8StringSerializerDeserializer.INSTANCE, DoubleSerializerDeserializer.INSTANCE });
@@ -131,7 +134,7 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
 
         for (GroupAlgorithms grouperAlgo : GroupAlgorithms.values()) {
 
-            if (grouperAlgo == GroupAlgorithms.PRECLUSTER) {
+            if (grouperAlgo != GroupAlgorithms.RECURSIVE_HYBRID_HASH) {
                 continue;
             }
 

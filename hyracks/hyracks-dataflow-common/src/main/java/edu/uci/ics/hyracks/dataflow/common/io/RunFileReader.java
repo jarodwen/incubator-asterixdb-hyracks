@@ -15,6 +15,7 @@
 package edu.uci.ics.hyracks.dataflow.common.io;
 
 import java.nio.ByteBuffer;
+import java.util.logging.FileHandler;
 
 import edu.uci.ics.hyracks.api.comm.IFrameReader;
 import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
@@ -30,7 +31,10 @@ public class RunFileReader implements IFrameReader {
     private IFileHandle handle;
     private long readPtr;
 
-    public RunFileReader(FileReference file, IIOManager ioManager, long size) {
+    public RunFileReader(
+            FileReference file,
+            IIOManager ioManager,
+            long size) {
         this.file = file;
         this.ioManager = ioManager;
         this.size = size;
@@ -43,7 +47,8 @@ public class RunFileReader implements IFrameReader {
     }
 
     @Override
-    public boolean nextFrame(ByteBuffer buffer) throws HyracksDataException {
+    public boolean nextFrame(
+            ByteBuffer buffer) throws HyracksDataException {
         buffer.clear();
         if (readPtr >= size) {
             return false;
@@ -55,6 +60,7 @@ public class RunFileReader implements IFrameReader {
     @Override
     public void close() throws HyracksDataException {
         ioManager.close(handle);
+        file.getFile().delete();
     }
 
     public long getFileSize() {
