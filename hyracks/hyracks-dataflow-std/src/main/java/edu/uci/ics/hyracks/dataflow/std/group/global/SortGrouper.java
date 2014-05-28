@@ -169,6 +169,9 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
                     flush(outputWriter, GrouperFlushOption.FLUSH_FOR_RESULT_STATE);
                 }
                 // reset the data frame count
+                for (ByteBuffer buf : buffers) {
+                    buf.putInt(frameSize - INT_SIZE, 0);
+                }
                 this.dataFrameCount = 0;
                 this.tupleCount = 0;
             }
@@ -426,6 +429,8 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
                 this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
                 this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                         appender.getTupleCount());
+                // Try to reset the output frame
+                appender.reset(outFrame, true);
                 debugOptionalIO++;
             }
         }
@@ -481,6 +486,7 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
                 throw new HyracksDataException("The output cannot be fit into a frame.");
             }
         }
+        groupResultCacheAppender.reset(groupResultCacheBuffer, true);
 
     }
 

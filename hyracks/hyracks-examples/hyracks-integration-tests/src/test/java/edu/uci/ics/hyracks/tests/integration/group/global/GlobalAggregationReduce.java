@@ -134,7 +134,7 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
 
         for (GroupAlgorithms grouperAlgo : GroupAlgorithms.values()) {
 
-            if (grouperAlgo != GroupAlgorithms.RECURSIVE_HYBRID_HASH) {
+            if (grouperAlgo != GroupAlgorithms.SORT_GROUP) {
                 continue;
             }
 
