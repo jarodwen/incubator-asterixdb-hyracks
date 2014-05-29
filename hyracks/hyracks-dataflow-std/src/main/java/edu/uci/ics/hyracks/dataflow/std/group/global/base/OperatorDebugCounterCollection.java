@@ -24,11 +24,16 @@ public class OperatorDebugCounterCollection {
         IO_OUT_DISK(".io.out.disk"),
         IO_OUT_NETWORK(".io.out.network"),
         IO_IN_DISK(".io.in.disk"),
-        IO_IN_NETWORK(".io.in.network");
+        IO_IN_NETWORK(".io.in.network"),
+        IN_FRAMES(".in.frames"),
+        IN_RECOEDS(".in.records"),
+        OUT_FRAMES(".out.frames"),
+        OUT_RECORDS(".out.records");
 
         private final String counterName;
 
-        private RequiredCounters(String counterName) {
+        private RequiredCounters(
+                String counterName) {
             this.counterName = PREFIX_REQUIRED + counterName;
         }
 
@@ -52,7 +57,8 @@ public class OperatorDebugCounterCollection {
 
         private final String counterName;
 
-        private OptionalCommonCounters(String counterName) {
+        private OptionalCommonCounters(
+                String counterName) {
             this.counterName = PREFIX_OPTIONAL + PREFIX_COMMON + counterName;
         }
 
@@ -73,7 +79,8 @@ public class OperatorDebugCounterCollection {
 
         private final String counterName;
 
-        private OptionalSortCounters(String counterName) {
+        private OptionalSortCounters(
+                String counterName) {
             this.counterName = PREFIX_OPTIONAL + PREFIX_SORT + counterName;
         }
 
@@ -97,7 +104,8 @@ public class OperatorDebugCounterCollection {
 
         private final String counterName;
 
-        private OptionalHashCounters(String counterName) {
+        private OptionalHashCounters(
+                String counterName) {
             this.counterName = PREFIX_OPTIONAL + PREFIX_HASH + counterName;
         }
 
@@ -110,7 +118,8 @@ public class OperatorDebugCounterCollection {
 
     private final HashMap<String, Long> optionalCustomizedCounters = new HashMap<>();
 
-    public OperatorDebugCounterCollection(String debugID) {
+    public OperatorDebugCounterCollection(
+            String debugID) {
 
         this.debugID = debugID;
 
@@ -134,7 +143,8 @@ public class OperatorDebugCounterCollection {
         optionalCustomizedCounters.clear();
     }
 
-    public void dumpCounters(ICounterContext counterCtx) {
+    public void dumpCounters(
+            ICounterContext counterCtx) {
         for (RequiredCounters c : RequiredCounters.values()) {
             counterCtx.getCounter(debugID + c.counterName, true).update(requiredCounters[c.ordinal()]);
         }
@@ -152,30 +162,40 @@ public class OperatorDebugCounterCollection {
         }
     }
 
-    public void updateRequiredCounter(RequiredCounters rcName, long delta) {
+    public void updateRequiredCounter(
+            RequiredCounters rcName,
+            long delta) {
         requiredCounters[rcName.ordinal()] += delta;
     }
 
-    public void updateOptionalCommonCounter(OptionalCommonCounters ccName, long delta) {
+    public void updateOptionalCommonCounter(
+            OptionalCommonCounters ccName,
+            long delta) {
         optionalCommonCounters[ccName.ordinal()] += delta;
     }
 
-    public void updateOptionalSortCounter(OptionalSortCounters scName, long delta) {
+    public void updateOptionalSortCounter(
+            OptionalSortCounters scName,
+            long delta) {
         optionalSortCounters[scName.ordinal()] += delta;
     }
 
-    public void updateOptionalHashCounter(OptionalHashCounters hcName, long delta) {
+    public void updateOptionalHashCounter(
+            OptionalHashCounters hcName,
+            long delta) {
         optionalHashCounters[hcName.ordinal()] += delta;
     }
 
-    public void updateOptionalCustomizedCounter(String ccName, long delta) {
+    public void updateOptionalCustomizedCounter(
+            String ccName,
+            long delta) {
         String fullKeyName = PREFIX_OPTIONAL + PREFIX_CUSTOMIZER + ccName;
         long val = (optionalCustomizedCounters.containsKey(fullKeyName) ? optionalCustomizedCounters.get(fullKeyName)
                 : 0);
         optionalCustomizedCounters.put(fullKeyName, val + delta);
     }
-    
-    public String getDebugID(){
+
+    public String getDebugID() {
         return this.debugID;
     }
 }

@@ -71,7 +71,7 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
     private final boolean useBloomfilter = true;
     private final int[] ipMasks = new int[] { 0, 1, 2, 3, 5 };
     private final long[] groupCounts = new long[] { 10000000, 9283319, 3607602, 244144, 4096 };
-    private final int inputDataOption = 0;
+    private final int inputDataOption = 2;
     private final boolean enableResidentPart = false;
 
     final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
@@ -134,7 +134,7 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
 
         for (GroupAlgorithms grouperAlgo : GroupAlgorithms.values()) {
 
-            if (grouperAlgo != GroupAlgorithms.SORT_GROUP) {
+            if (grouperAlgo == GroupAlgorithms.PRECLUSTER) {
                 continue;
             }
 

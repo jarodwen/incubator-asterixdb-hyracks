@@ -94,6 +94,8 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
 
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
 
+    private long profileInRecords, profileInFrames, profileOutRecords, profileOutFrames;
+
     public HashGrouper(
             IHyracksTaskContext ctx,
             int[] keyFields,
@@ -185,6 +187,9 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
     @Override
     public void nextFrame(
             ByteBuffer buffer) throws HyracksDataException {
+
+        profileInFrames++;
+        profileInRecords += buffer.getInt(buffer.capacity() - INT_SIZE);
 
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, 1);
 
@@ -566,6 +571,10 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
                         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                                 outputAppender.getTupleCount());
                         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
+
+                        profileOutFrames++;
+                        profileOutRecords += outputAppender.getTupleCount();
+
                         FrameUtils.flushFrame(outputBuffer, writer);
                         profileIOOutDisk++;
 
@@ -603,6 +612,8 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
                         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                                 outputAppender.getTupleCount());
                         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
+                        profileOutFrames++;
+                        profileOutRecords += outputAppender.getTupleCount();
                         FrameUtils.flushFrame(outputBuffer, writer);
                         profileIOOutNetwork++;
                         if (flushOption == GrouperFlushOption.FLUSH_FOR_GROUP_STATE) {
@@ -730,6 +741,11 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugCounters.updateRequiredCounter(RequiredCounters.CPU, debugRequiredCPU);
         this.debugCounters.updateRequiredCounter(RequiredCounters.IO_OUT_DISK, debugOptionalIODumped);
 
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IN_FRAMES, profileInFrames);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IN_RECOEDS, profileInRecords);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_FRAMES, profileOutFrames);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_RECORDS, profileOutRecords);
+
         this.debugCounters.updateOptionalCustomizedCounter(".io.streamed", debugOptionalIOStreamed);
         this.debugCounters.updateOptionalCustomizedCounter(".io.dumped", debugOptionalIODumped);
 
@@ -768,6 +784,10 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugTempCPUCounter = 0;
         this.debugTempGroupsInHashtable = 0;
         this.debugTempUsedSlots = 0;
+        this.profileInRecords = 0;
+        this.profileInFrames = 0;
+        this.profileOutRecords = 0;
+        this.profileOutFrames = 0;
         this.debugCounters.reset();
 
         ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);

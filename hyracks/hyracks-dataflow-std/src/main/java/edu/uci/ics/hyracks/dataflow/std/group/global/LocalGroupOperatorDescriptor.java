@@ -84,6 +84,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
     public static final int HT_MINI_BLOOM_FILTER_SIZE = 1;
 
     public static final double HT_SLOT_CAP_RATIO = 1.0;
+    
+    public static final int INT_SIZE = 4;
 
     private final int framesLimit, levelSeed;
 

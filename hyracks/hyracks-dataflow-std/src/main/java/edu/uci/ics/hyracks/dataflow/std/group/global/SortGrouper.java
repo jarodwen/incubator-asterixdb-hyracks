@@ -75,7 +75,8 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
     private FrameTupleAccessor groupResultCacheAccessor;
 
     private long debugOptionalSortCPUCompare = 0, debugOptionalSortCPUCopy = 0, debugOptionalIO = 0;
-    private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
+    private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork,
+            profileInRecords, profileInFrames, profileOutRecords, profileOutFrames;
 
     public SortGrouper(
             IHyracksTaskContext ctx,
@@ -150,6 +151,8 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
             ByteBuffer buffer) throws HyracksDataException {
 
         profileIOInNetwork++;
+        profileInFrames++;
+        profileInRecords += buffer.getInt(buffer.capacity() - INT_SIZE);
 
         ByteBuffer copyFrame;
         if (dataFrameCount == buffers.size()) {
@@ -189,7 +192,7 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
             tupleCount += bufferTupleAccessor.getTupleCount();
         }
 
-        debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT, tupleCount);
+        this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT, tupleCount);
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, dataFrameCount);
 
         tPointers = (tPointers == null || tPointers.length < tupleCount * POINTER_LENGTH) ? new int[tupleCount
@@ -420,7 +423,12 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
             writeOutput(groupResultCacheAccessor, 0, writer,
                     flushOption.getOutputState() == GroupOutputState.RESULT_STATE);
             if (appender.getTupleCount() > 0) {
+
+                profileOutFrames++;
+                profileOutRecords += appender.getTupleCount();
+
                 FrameUtils.flushFrame(outFrame, writer);
+
                 if (isGenerateRuns) {
                     profileIOOutDisk++;
                 } else {
@@ -468,6 +476,10 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         }
 
         if (!appender.append(tupleBuilder.getFieldEndOffsets(), tupleBuilder.getByteArray(), 0, tupleBuilder.getSize())) {
+
+            profileOutFrames++;
+            profileOutRecords += appender.getTupleCount();
+
             FrameUtils.flushFrame(outFrame, writer);
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
@@ -511,6 +523,11 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugCounters.updateRequiredCounter(RequiredCounters.CPU, debugOptionalSortCPUCompare);
         this.debugCounters.updateRequiredCounter(RequiredCounters.IO_OUT_DISK, debugOptionalIO);
 
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IN_FRAMES, profileInFrames);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IN_RECOEDS, profileInRecords);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_FRAMES, profileOutFrames);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_RECORDS, profileOutRecords);
+
         this.debugCounters.updateOptionalSortCounter(OptionalSortCounters.CPU_COMPARE, debugOptionalSortCPUCompare);
         this.debugCounters.updateOptionalSortCounter(OptionalSortCounters.CPU_COPY, debugOptionalSortCPUCopy);
         this.debugCounters.dumpCounters(ctx.getCounterContext());
@@ -535,6 +552,11 @@ public class SortGrouper extends AbstractHistogramPushBasedGrouper {
         profileIOInNetwork = 0;
         profileIOOutDisk = 0;
         profileIOOutNetwork = 0;
+
+        this.profileInRecords = 0;
+        this.profileInFrames = 0;
+        this.profileOutRecords = 0;
+        this.profileOutFrames = 0;
     }
 
     @Override

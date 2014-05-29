@@ -130,6 +130,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     private long debugTempCPUCounter = 0, debugTempGroupsInHashtable = 0, debugTempUsedSlots = 0;
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork,
             profileOutputRecords;
+
+    private long profileInRecords, profileInFrames, profileOutRecords, profileOutFrames;
+
     private long debugBloomFilterSucc = 0, debugBloomFilterFail = 0;
 
     public HybridHashGrouper(
@@ -309,6 +312,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
             ByteBuffer buffer) throws HyracksDataException {
 
         profileIOInNetwork++;
+
+        profileInFrames++;
+        profileInRecords += buffer.getInt(buffer.capacity() - INT_SIZE);
 
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, 1);
 
@@ -707,6 +713,10 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 if (!outputAppender.append(spilledOutputTupleBuilder.getFieldEndOffsets(),
                         spilledOutputTupleBuilder.getByteArray(), 0, spilledOutputTupleBuilder.getSize())) {
                     this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
+
+                    profileOutFrames++;
+                    profileOutRecords += outputAppender.getTupleCount();
+
                     FrameUtils.flushFrame(this.frameManager.getFrame(outputBuffer), writer);
 
                     if (isGenerateRuns) {
@@ -735,6 +745,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         if (outputAppender.getTupleCount() > 0) {
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
+            profileOutFrames++;
+            profileOutRecords += outputAppender.getTupleCount();
             FrameUtils.flushFrame(this.frameManager.getFrame(outputBuffer), writer);
             if (isGenerateRuns && partitionIndex >= 0) {
                 profileIOOutDisk++;
@@ -805,7 +817,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                         } else {
                             profileIOOutNetwork++;
                         }
-
+                        profileOutFrames++;
+                        profileOutRecords += outputAppender.getTupleCount();
                         FrameUtils.flushFrame(frameManager.getFrame(outputBuffer), outputWriter);
 
                         outputAppender.reset(frameManager.getFrame(outputBuffer), true);
@@ -837,6 +850,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
             } else {
                 profileIOOutNetwork++;
             }
+            profileOutFrames++;
+            profileOutRecords += outputAppender.getTupleCount();
             FrameUtils.flushFrame(frameManager.getFrame(outputBuffer), outputWriter);
             outputAppender.reset(frameManager.getFrame(outputBuffer), true);
         }
@@ -999,6 +1014,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugCounters.updateRequiredCounter(RequiredCounters.CPU, debugRequiredCPU);
         this.debugCounters.updateRequiredCounter(RequiredCounters.IO_OUT_DISK, debugOptionalIODumped);
 
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IN_FRAMES, profileInFrames);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.IN_RECOEDS, profileInRecords);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_FRAMES, profileOutFrames);
+        this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_RECORDS, profileOutRecords);
+
         this.debugCounters.updateOptionalCustomizedCounter(".io.streamed", debugOptionalIOStreamed);
         this.debugCounters.updateOptionalCustomizedCounter(".io.dumped", debugOptionalIODumped);
 
@@ -1051,6 +1071,10 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugTempUsedSlots = 0;
         this.debugBloomFilterSucc = 0;
         this.debugBloomFilterFail = 0;
+        this.profileInRecords = 0;
+        this.profileInFrames = 0;
+        this.profileOutRecords = 0;
+        this.profileOutFrames = 0;
         this.debugCounters.reset();
 
         ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);

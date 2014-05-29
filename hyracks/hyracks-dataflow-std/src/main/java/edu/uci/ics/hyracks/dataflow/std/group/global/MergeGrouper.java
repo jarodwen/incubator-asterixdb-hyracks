@@ -66,19 +66,36 @@ public class MergeGrouper {
     private boolean debugDumpToFileFlag = false;
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
 
-    public MergeGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit,
-            IBinaryComparatorFactory[] comparatorFactories, INormalizedKeyComputerFactory normalizerFactory,
-            IAggregatorDescriptorFactory partialMergerFactory, IAggregatorDescriptorFactory finalMergerFactory,
-            RecordDescriptor inRecDesc, RecordDescriptor outRecDesc) throws HyracksDataException {
+    private long profileOutRecords, profileOutFrames;
+
+    public MergeGrouper(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            IBinaryComparatorFactory[] comparatorFactories,
+            INormalizedKeyComputerFactory normalizerFactory,
+            IAggregatorDescriptorFactory partialMergerFactory,
+            IAggregatorDescriptorFactory finalMergerFactory,
+            RecordDescriptor inRecDesc,
+            RecordDescriptor outRecDesc) throws HyracksDataException {
         this(ctx, keyFields, decorFields, framesLimit, 1, comparatorFactories, normalizerFactory, null,
                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc);
     }
 
-    public MergeGrouper(IHyracksTaskContext ctx, int[] keyFields, int[] decorFields, int framesLimit, int partitions,
-            IBinaryComparatorFactory[] comparatorFactories, INormalizedKeyComputerFactory normalizerFactory,
-            IBinaryHashFunctionFactory[] hashFunctionFactories, IAggregatorDescriptorFactory partialMergerFactory,
-            IAggregatorDescriptorFactory finalMergerFactory, RecordDescriptor inRecDesc, RecordDescriptor outRecDesc)
-            throws HyracksDataException {
+    public MergeGrouper(
+            IHyracksTaskContext ctx,
+            int[] keyFields,
+            int[] decorFields,
+            int framesLimit,
+            int partitions,
+            IBinaryComparatorFactory[] comparatorFactories,
+            INormalizedKeyComputerFactory normalizerFactory,
+            IBinaryHashFunctionFactory[] hashFunctionFactories,
+            IAggregatorDescriptorFactory partialMergerFactory,
+            IAggregatorDescriptorFactory finalMergerFactory,
+            RecordDescriptor inRecDesc,
+            RecordDescriptor outRecDesc) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -105,7 +122,9 @@ public class MergeGrouper {
                 + "." + String.valueOf(Thread.currentThread().getId()));
     }
 
-    public void process(List<RunFileReader> runFiles, IFrameWriter writer) throws HyracksDataException {
+    public void process(
+            List<RunFileReader> runFiles,
+            IFrameWriter writer) throws HyracksDataException {
 
         runs = runFiles;
 
@@ -154,6 +173,9 @@ public class MergeGrouper {
             throw new HyracksDataException(e);
         } finally {
 
+            this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_FRAMES, profileOutFrames);
+            this.debugCounters.updateRequiredCounter(RequiredCounters.OUT_RECORDS, profileOutRecords);
+
             this.debugCounters.dumpCounters(ctx.getCounterContext());
             this.debugCounters.reset();
 
@@ -174,12 +196,17 @@ public class MergeGrouper {
             profileIOOutDisk = 0;
             profileIOOutNetwork = 0;
 
+            this.profileOutRecords = 0;
+            this.profileOutFrames = 0;
+
             writer.close();
         }
     }
 
-    protected void merge(IFrameWriter mergeResultWriter, IFrameReader[] runCursors, boolean isFinal)
-            throws HyracksDataException {
+    protected void merge(
+            IFrameWriter mergeResultWriter,
+            IFrameReader[] runCursors,
+            boolean isFinal) throws HyracksDataException {
 
         IAggregatorDescriptor merger = (isFinal) ? finalMerger : partialMerger;
 
@@ -201,6 +228,13 @@ public class MergeGrouper {
                             writerAppender.getTupleCount());
                     this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
                 }
+
+                if (isFinal) {
+                    profileOutFrames++;
+                    profileOutRecords += writerFrame.getInt(writerFrame.capacity()
+                            - LocalGroupOperatorDescriptor.INT_SIZE);
+                }
+
                 FrameUtils.flushFrame(writerFrame, mergeResultWriter);
                 if (isFinal) {
                     profileIOOutNetwork++;
@@ -213,7 +247,9 @@ public class MergeGrouper {
         }
     }
 
-    private void flushOutFrame(IFrameWriter writer, boolean isFinal) throws HyracksDataException {
+    private void flushOutFrame(
+            IFrameWriter writer,
+            boolean isFinal) throws HyracksDataException {
 
         IAggregatorDescriptor merger = (isFinal) ? finalMerger : partialMerger;
 
@@ -252,6 +288,13 @@ public class MergeGrouper {
 
             if (!writerAppender.append(flushTupleBuilder.getFieldEndOffsets(), flushTupleBuilder.getByteArray(), 0,
                     flushTupleBuilder.getSize())) {
+
+                if (isFinal) {
+                    profileOutFrames++;
+                    profileOutRecords += writerFrame.getInt(writerFrame.capacity()
+                            - LocalGroupOperatorDescriptor.INT_SIZE);
+                }
+
                 FrameUtils.flushFrame(writerFrame, writer);
 
                 if (isFinal) {
