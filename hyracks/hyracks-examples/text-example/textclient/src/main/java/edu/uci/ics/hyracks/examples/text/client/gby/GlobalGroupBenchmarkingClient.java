@@ -167,11 +167,10 @@ public class GlobalGroupBenchmarkingClient {
                     options.groupCount, options.fudgeFactor, options.algo, options.useBloomfilter,
                     options.enableResidentPart);
 
-            System.out.print(i + "\t" + (System.currentTimeMillis() - start));
             start = System.currentTimeMillis();
             JobId jobId = hcc.startJob(deployID, job);
             hcc.waitForCompletion(jobId);
-            System.out.println("\t" + (System.currentTimeMillis() - start));
+            System.out.println("alg-" + options.algo + "\t" + (System.currentTimeMillis() - start));
         }
     }
 
@@ -285,7 +284,7 @@ public class GlobalGroupBenchmarkingClient {
         IConnectorDescriptor conn0 = new OneToOneConnectorDescriptor(spec);
 
         spec.connect(conn0, csvScanner, 0, grouper, 0);
-        
+
         IFileSplitProvider outSplitProvider = new ConstantFileSplitProvider(outSplits);
 
         AbstractSingleActivityOperatorDescriptor writer = new PlainFileWriterOperatorDescriptor(spec, outSplitProvider,

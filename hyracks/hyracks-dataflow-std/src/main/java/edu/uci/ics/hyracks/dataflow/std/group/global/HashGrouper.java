@@ -635,6 +635,7 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_OUTPUT,
                     outputAppender.getTupleCount());
             this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_OUTPUT, 1);
+            profileOutRecords += outputAppender.getTupleCount();
             FrameUtils.flushFrame(outputBuffer, writer);
             if (isGenerateRuns && this.runReaders.size() > 0) {
                 profileIOOutDisk++;

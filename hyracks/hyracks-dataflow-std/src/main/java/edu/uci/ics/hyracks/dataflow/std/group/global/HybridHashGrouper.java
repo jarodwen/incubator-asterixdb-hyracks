@@ -219,9 +219,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     public void open() throws HyracksDataException {
 
         // initialize the hash table
-        int headerFramesCount = (int) (Math.ceil((double) tableSize
-                * (HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0))
-                / frameSize));
+        int slotsPerFrame = frameSize
+                / ((useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE);
+        int headerFramesCount = (int) Math.ceil((double) this.tableSize / slotsPerFrame);
 
         if (framesLimit < headerFramesCount + 2) {
             throw new HyracksDataException("Not enough frame (" + framesLimit + ") for a hash table with " + tableSize
