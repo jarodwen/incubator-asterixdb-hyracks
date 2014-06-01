@@ -95,9 +95,9 @@ public class GlobalGroupBenchmarkingClient {
         public double fudgeFactor = 1.4;
 
         @Option(name = "-use-bloomfilter",
-                usage = "Whether to use bloom-filter in hash table lookup for hybrid-hash algorithms (default: true)",
+                usage = "Whether to use bloom-filter in hash table lookup for hybrid-hash algorithms (default: false)",
                 required = false)
-        public boolean useBloomfilter = true;
+        public boolean useBloomfilter = false;
 
         @Option(
                 name = "-enable-resident-part",

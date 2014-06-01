@@ -62,8 +62,14 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
 
     private ITuplePartitionComputer tuplePartitionComputer;
 
-    public GracePartitioner(IHyracksTaskContext ctx, int framesLimit, int partitions, int[] keys, int hashBaseSeed,
-            IBinaryHashFunctionFamily[] hashFunctionFamilyFactories, RecordDescriptor inRecDesc) {
+    public GracePartitioner(
+            IHyracksTaskContext ctx,
+            int framesLimit,
+            int partitions,
+            int[] keys,
+            int hashBaseSeed,
+            IBinaryHashFunctionFamily[] hashFunctionFamilyFactories,
+            RecordDescriptor inRecDesc) {
         this.ctx = ctx;
         this.frameSize = ctx.getFrameSize();
         this.partitions = partitions;
@@ -102,7 +108,8 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
      * @see edu.uci.ics.hyracks.dataflow.std.group.global.base.IPushBasedGrouper#nextFrame(java.nio.ByteBuffer, int)
      */
     @Override
-    public void nextFrame(ByteBuffer buffer) throws HyracksDataException {
+    public void nextFrame(
+            ByteBuffer buffer) throws HyracksDataException {
         inputFrameTupleAccessor.reset(buffer);
         int tupleCount = inputFrameTupleAccessor.getTupleCount();
 
@@ -182,7 +189,9 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
         }
     }
 
-    private void recursivePartition(RunFileReader runReader, int recursionLevel) throws HyracksDataException {
+    private void recursivePartition(
+            RunFileReader runReader,
+            int recursionLevel) throws HyracksDataException {
 
         ByteBuffer inputBuf = ctx.allocateFrame();
         runReader.open();
@@ -206,6 +215,7 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
                         runsForBufs[partitionIndex].open();
                     }
                     FrameUtils.flushFrame(bufs[partitionIndex], runsForBufs[partitionIndex]);
+                    outputFrameAppender.reset(bufs[partitionIndex], true);
                     if (!outputFrameAppender.append(inputFrameTupleAccessor, i)) {
                         throw new HyracksDataException("Failed to insert a tuple into a frame");
                     }
