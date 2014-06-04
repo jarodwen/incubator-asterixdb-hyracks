@@ -73,6 +73,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
     private int maxRecursionLevel;
 
+    private final int minFramesPerResPart;
+
     private final OperatorDebugCounterCollection debugCounters;
 
     private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
@@ -99,7 +101,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             IFrameWriter outputWriter,
             boolean useDynamic,
             boolean enableResidentPart,
-            boolean useBloomfilter) throws HyracksDataException {
+            boolean useBloomfilter,
+            int minFramesPerResPart) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -113,6 +116,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         this.outRecordDesc = outRecordDescriptor;
         this.hashLevelSeed = hashLevelSeed;
         this.outputWriter = outputWriter;
+        this.minFramesPerResPart = minFramesPerResPart;
 
         this.aggregatorFactory = aggregatorFactory;
         this.partialMergerFactory = partialMergerFactory;
@@ -145,7 +149,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                 fudgeFactor, (useDynamicDestaging ? 2 : 1));
         hybridHashSpilledPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize, outputGroupCount,
                 groupStateSizeInBytes, gracePartitions, fudgeFactor, (useDynamicDestaging ? 2 : 1));
-        hybridHashResidentPartitions = computeHybridHashResidentPartitions(framesLimit, hybridHashSpilledPartitions);
+        hybridHashResidentPartitions = computeHybridHashResidentPartitions(framesLimit, hybridHashSpilledPartitions,
+                minFramesPerResPart);
         maxRecursionLevel = getMaxLevelsIfUsingSortGrouper(framesLimit, inputRecordCount, groupStateSizeInBytes);
 
         this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid.0.keys", outputGroupCount
@@ -226,8 +231,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
     public static int computeHybridHashResidentPartitions(
             int framesLimit,
-            int hybridHashSpilledPartitions) {
-        return Math.max(1, (framesLimit - 1 - hybridHashSpilledPartitions) / 3);
+            int hybridHashSpilledPartitions,
+            int minFramesPerPart) {
+        return Math.max(1, (framesLimit - 1 - hybridHashSpilledPartitions) / minFramesPerPart);
     }
 
     /**
@@ -377,8 +383,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                     hybridHashGrouper = new HybridHashGrouper(ctx, keyFields, decorFieldsInGroupState, framesLimit,
                             firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                             partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter, true, newTableSize,
-                            runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition),
-                            this.useBloomfilter, false, true, enableResidentPart);
+                            runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition,
+                                    minFramesPerResPart), this.useBloomfilter, false, true, enableResidentPart);
                 }
                 originalRunsCount--;
             } else {
@@ -392,7 +398,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
                             true, newTableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
-                                    runPartition), true, false, true, enableResidentPart);
+                                    runPartition, minFramesPerResPart), true, false, true, enableResidentPart);
                 }
             }
 

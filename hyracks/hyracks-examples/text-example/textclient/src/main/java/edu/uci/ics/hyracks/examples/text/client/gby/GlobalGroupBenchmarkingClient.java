@@ -18,7 +18,6 @@ import java.io.File;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 
 import org.kohsuke.args4j.CmdLineParser;
@@ -117,6 +116,9 @@ public class GlobalGroupBenchmarkingClient {
         @Option(name = "-run-times", usage = "The number of runs for benchmarking", required = false)
         public int runTimes = 3;
 
+        @Option(name = "-min-frames", usage = "The minimum number of frames for resident partition", required = false)
+        public int minFramesPerResidentPart = 3;
+
     }
 
     private static final int[] keyFields = new int[] { 0 };
@@ -165,7 +167,7 @@ public class GlobalGroupBenchmarkingClient {
             job = createJob(parseFileSplits(options.inFileSplits), parseFileSplits(options.outFileSplits, i),
                     frameSize, options.framesLimit, options.ipMask, options.inputCount, groupStateInBytes,
                     options.groupCount, options.fudgeFactor, options.algo, options.useBloomfilter,
-                    options.enableResidentPart);
+                    options.enableResidentPart, options.minFramesPerResidentPart);
 
             start = System.currentTimeMillis();
             JobId jobId = hcc.startJob(deployID, job);
@@ -218,7 +220,8 @@ public class GlobalGroupBenchmarkingClient {
             double fudgeFactor,
             int alg,
             boolean useBloomfilter,
-            boolean enableResidentPart) throws HyracksDataException {
+            boolean enableResidentPart,
+            int minFramesPerResidentPart) throws HyracksDataException {
         JobSpecification spec = new JobSpecification(frameSize);
         IFileSplitProvider splitsProvider = new ConstantFileSplitProvider(inSplits);
 
@@ -277,7 +280,7 @@ public class GlobalGroupBenchmarkingClient {
                 new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
                         new DoubleSumFieldAggregatorFactory(keyFields.length, false),
                         new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc, selectedAlg, 0,
-                useBloomfilter, enableResidentPart);
+                useBloomfilter, enableResidentPart, minFramesPerResidentPart);
 
         createPartitionConstraint(spec, grouper, inSplits);
 

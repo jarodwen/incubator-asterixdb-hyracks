@@ -84,7 +84,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
     public static final int HT_MINI_BLOOM_FILTER_SIZE = 1;
 
     public static final double HT_SLOT_CAP_RATIO = 1.0;
-    
+
     public static final int INT_SIZE = 4;
 
     private final int framesLimit, levelSeed;
@@ -112,6 +112,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
 
     private final int groupStateSizeInBytes;
     private final double fudgeFactor;
+
+    private final int minFramesPerResidentPart;
 
     /**
      * Three group-by output states
@@ -182,7 +184,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             GroupAlgorithms algorithm,
             int levelSeed,
             boolean bloomfilterHash,
-            boolean enableResidentPart) throws HyracksDataException {
+            boolean enableResidentPart,
+            int minFramesPerResPart) throws HyracksDataException {
         super(spec, 1, 1);
         this.framesLimit = framesLimit;
         this.useBloomfilterForHashtable = bloomfilterHash;
@@ -202,6 +205,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         this.hashFamilies = hashFamilies;
         recordDescriptors[0] = outRecDesc;
         this.algorithm = algorithm;
+        this.minFramesPerResidentPart = minFramesPerResPart;
 
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
@@ -363,8 +367,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
-                                RecursiveHybridHashGrouper.computeHybridHashResidentPartitions(framesLimit, 1), true,
-                                false, true, enableResidentPart);
+                                RecursiveHybridHashGrouper.computeHybridHashResidentPartitions(framesLimit, 1,
+                                        minFramesPerResidentPart), true, false, true, enableResidentPart);
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
@@ -374,7 +378,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, false,
-                                enableResidentPart, useBloomfilterForHashtable);
+                                enableResidentPart, useBloomfilterForHashtable, minFramesPerResidentPart);
                         break;
                     case PRECLUSTER:
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
@@ -397,7 +401,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, true,
-                                enableResidentPart, useBloomfilterForHashtable);
+                                enableResidentPart, useBloomfilterForHashtable, minFramesPerResidentPart);
                         break;
                     case SORT_GROUP_MERGE_GROUP:
                     default:

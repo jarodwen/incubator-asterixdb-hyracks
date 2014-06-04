@@ -70,19 +70,18 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
     private final boolean useBloomfilter = true;
     private final int[] ipMasks = new int[] { 0, 1, 2, 3, 5 };
     private final long[] groupCounts = new long[] { 10000000, 9283319, 3607602, 244144, 4096 };
-    //private final long[] groupCounts = new long[] { 10000000, 9283319, 3607602, 244144, 4096 };
-    
+    // private final long[] groupCounts = new long[] { 10000000, 9283319, 3607602, 244144, 4096 };
+    private final int minFramesPerResidentPart = 2;
+
     private final boolean enableResidentPart = false;
-    
+
     private final int inputDataOption = 0;
 
-    final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
-            new FileSplit[] { new FileSplit(
-                    NC1_ID,
-                    new FileReference(
-                            new File(
-                                    //"/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
-                                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
+    final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(new FileSplit[] { new FileSplit(NC1_ID,
+            new FileReference(new File(
+            // "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small")))
+            // });
+                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/s02_1000000000_10000000.dat"))) });
 
     final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
             UTF8StringSerializerDeserializer.INSTANCE, DoubleSerializerDeserializer.INSTANCE });
@@ -150,7 +149,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
                 new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
                         new DoubleSumFieldAggregatorFactory(keyFields.length, false),
                         new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc, localGrouper, 0,
-                useBloomfilter, enableResidentPart);
+                useBloomfilter, enableResidentPart, minFramesPerResidentPart);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper0, NC1_ID);
 
@@ -169,7 +168,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
                 new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
                         new DoubleSumFieldAggregatorFactory(keyFields.length, false),
                         new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc, globalGrouper, 1,
-                useBloomfilter, enableResidentPart);
+                useBloomfilter, enableResidentPart, minFramesPerResidentPart);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper1, NC1_ID);
 
