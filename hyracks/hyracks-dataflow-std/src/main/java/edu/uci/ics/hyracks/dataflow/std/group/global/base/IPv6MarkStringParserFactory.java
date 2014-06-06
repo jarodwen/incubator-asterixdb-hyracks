@@ -27,16 +27,39 @@ public class IPv6MarkStringParserFactory implements IValueParserFactory {
 
     private static final long serialVersionUID = 1L;
 
+    private boolean flipBit;
+
     private int mask;
 
-    private IPv6MarkStringParserFactory(int mask) {
+    private IPv6MarkStringParserFactory(
+            int mask) {
         this.mask = mask;
+        this.flipBit = false;
     }
 
-    public static IValueParserFactory getInstance(int mask) {
+    private IPv6MarkStringParserFactory(
+            int mask,
+            boolean flipBit) {
+        this.mask = mask;
+        this.flipBit = flipBit;
+    }
+
+    public static IValueParserFactory getInstance(
+            int mask) {
         if (INSTANCES[0] == null) {
             for (int i = 0; i < 33; i++) {
                 INSTANCES[i] = new IPv6MarkStringParserFactory(i);
+            }
+        }
+        return INSTANCES[mask];
+    }
+
+    public static IValueParserFactory getInstance(
+            int mask,
+            boolean flipBit) {
+        if (INSTANCES[0] == null) {
+            for (int i = 0; i < 33; i++) {
+                INSTANCES[i] = new IPv6MarkStringParserFactory(i, flipBit);
             }
         }
         return INSTANCES[mask];
@@ -53,7 +76,11 @@ public class IPv6MarkStringParserFactory implements IValueParserFactory {
             private byte[] ip;
 
             @Override
-            public void parse(char[] buffer, int start, int length, DataOutput out) throws HyracksDataException {
+            public void parse(
+                    char[] buffer,
+                    int start,
+                    int length,
+                    DataOutput out) throws HyracksDataException {
 
                 ip = new byte[length + 2];
 
@@ -69,7 +96,15 @@ public class IPv6MarkStringParserFactory implements IValueParserFactory {
                         throw new HyracksDataException("Containing invalid character (" + ch + ") for a IPv6 string");
                     }
                     if (ch != ':' && toReplace > 0) {
-                        ip[count++] = 'f';
+                        if (flipBit) {
+                            if (ip[count] <= '7') {
+                                ip[count++] = '0';
+                            } else {
+                                ip[count++] = '1';
+                            }
+                        } else {
+                            ip[count++] = 'f';
+                        }
                         toReplace--;
                     } else {
                         ip[count++] = (byte) ch;

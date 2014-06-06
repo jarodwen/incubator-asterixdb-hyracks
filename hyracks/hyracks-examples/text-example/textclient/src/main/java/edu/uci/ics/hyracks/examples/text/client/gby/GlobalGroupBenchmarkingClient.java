@@ -119,6 +119,9 @@ public class GlobalGroupBenchmarkingClient {
         @Option(name = "-min-frames", usage = "The minimum number of frames for resident partition", required = false)
         public int minFramesPerResidentPart = 3;
 
+        @Option(name = "-flip-bit", usage = "The minimum number of frames for resident partition", required = false)
+        public boolean maskFlipBit = false;
+
     }
 
     private static final int[] keyFields = new int[] { 0 };
@@ -167,7 +170,7 @@ public class GlobalGroupBenchmarkingClient {
             job = createJob(parseFileSplits(options.inFileSplits), parseFileSplits(options.outFileSplits, i),
                     frameSize, options.framesLimit, options.ipMask, options.inputCount, groupStateInBytes,
                     options.groupCount, options.fudgeFactor, options.algo, options.useBloomfilter,
-                    options.enableResidentPart, options.minFramesPerResidentPart);
+                    options.enableResidentPart, options.minFramesPerResidentPart, options.maskFlipBit);
 
             start = System.currentTimeMillis();
             JobId jobId = hcc.startJob(deployID, job);
@@ -221,12 +224,13 @@ public class GlobalGroupBenchmarkingClient {
             int alg,
             boolean useBloomfilter,
             boolean enableResidentPart,
-            int minFramesPerResidentPart) throws HyracksDataException {
+            int minFramesPerResidentPart,
+            boolean maskFlipBit) throws HyracksDataException {
         JobSpecification spec = new JobSpecification(frameSize);
         IFileSplitProvider splitsProvider = new ConstantFileSplitProvider(inSplits);
 
         ITupleParserFactory tupleParserFactory = new DelimitedDataTupleParserFactory(new IValueParserFactory[] {
-                IPv6MarkStringParserFactory.getInstance(ipMask), DoubleParserFactory.INSTANCE }, '|');
+                IPv6MarkStringParserFactory.getInstance(ipMask, maskFlipBit), DoubleParserFactory.INSTANCE }, '|');
 
         FileScanOperatorDescriptor csvScanner = new FileScanOperatorDescriptor(spec, splitsProvider,
                 tupleParserFactory, inDesc);
