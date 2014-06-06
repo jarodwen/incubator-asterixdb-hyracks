@@ -75,6 +75,8 @@ public class IPv6MarkStringParserFactory implements IValueParserFactory {
         return new IValueParser() {
             private byte[] ip;
 
+            private boolean fliper = true;
+            
             @Override
             public void parse(
                     char[] buffer,
@@ -97,7 +99,7 @@ public class IPv6MarkStringParserFactory implements IValueParserFactory {
                     }
                     if (ch != ':' && toReplace > 0) {
                         if (flipBit) {
-                            if (ip[count] <= '7') {
+                            if (fliper) {
                                 ip[count++] = '0';
                             } else {
                                 ip[count++] = '1';
@@ -110,6 +112,8 @@ public class IPv6MarkStringParserFactory implements IValueParserFactory {
                         ip[count++] = (byte) ch;
                     }
                 }
+                
+                fliper = !fliper;
 
                 try {
                     out.write(ip, 0, ip.length);

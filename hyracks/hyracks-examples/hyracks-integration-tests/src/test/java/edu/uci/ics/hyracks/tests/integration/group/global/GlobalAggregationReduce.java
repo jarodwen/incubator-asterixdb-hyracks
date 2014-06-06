@@ -91,7 +91,7 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
             IntegerSerializerDeserializer.INSTANCE });
 
     final ITupleParserFactory tupleParserFactory = new DelimitedDataTupleParserFactory(new IValueParserFactory[] {
-            IPv6MarkStringParserFactory.getInstance(ipMasks[inputDataOption]), DoubleParserFactory.INSTANCE }, '|');
+            IPv6MarkStringParserFactory.getInstance(ipMasks[inputDataOption], true), DoubleParserFactory.INSTANCE }, '|');
 
     private final SimpleUniformDataPartitionDescriptor dataPartitionDesc = new SimpleUniformDataPartitionDescriptor(
             1000000000, new long[] { groupCounts[inputDataOption] }, 1, new int[] { 0 });
