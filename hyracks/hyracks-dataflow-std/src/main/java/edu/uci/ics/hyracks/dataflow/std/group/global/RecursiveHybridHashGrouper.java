@@ -293,7 +293,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
     public void close() throws HyracksDataException {
         grouper.wrapup();
         List<RunFileReader> runs = grouper.getOutputRunReaders();
-        List<Long> groupsInRuns = grouper.getOutputGroupsInRows();
+        // Get the number of records in the runs
+        List<Long> groupsInRuns = grouper.getOutputRunSizeInRows();
 
         grouper.close();
 
@@ -301,7 +302,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             return;
         }
 
-        // try to estimate the collapsing ratio
+        // try to estimate the collapsing ratio, assuming that the number of raw records in the given
+        // run partition is known
         long recordsLeft = 0;
         for (long gr : groupsInRuns) {
             recordsLeft += gr;

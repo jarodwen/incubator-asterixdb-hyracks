@@ -47,6 +47,7 @@ public interface IFrameWriterRunGenerator extends IFrameWriter {
 
     /**
      * Get the number of groups (estimated) in each output run file.
+     * 
      * @return
      * @throws HyracksDataException
      */
