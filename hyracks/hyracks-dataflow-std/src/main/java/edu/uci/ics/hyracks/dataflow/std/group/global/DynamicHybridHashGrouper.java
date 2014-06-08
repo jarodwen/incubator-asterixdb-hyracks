@@ -383,7 +383,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             ByteBuffer headerFrame = frameManager.getFrame(this.htHeaderFrames[i]);
             headerFrame.position(0);
             while (headerFrame.position() + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE
-                    + HT_TUPLE_REF_SIZE < frameSize) {
+                    + HT_TUPLE_REF_SIZE <= frameSize) {
                 if (useMiniBloomFilter) {
                     headerFrame.put((byte) 0);
                 }
@@ -416,7 +416,6 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT, tupleCount);
 
         for (int tupleIndex = 0; tupleIndex < tupleCount; tupleIndex++) {
-
             int rawHashValue = rawTuplePartitionComputer
                     .partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
             int htSlotID = rawHashValue % this.tableSize;

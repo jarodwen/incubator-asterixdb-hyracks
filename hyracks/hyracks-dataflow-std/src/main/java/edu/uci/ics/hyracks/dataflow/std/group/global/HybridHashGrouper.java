@@ -299,7 +299,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
             ByteBuffer headerFrame = frameManager.getFrame(this.headers[i]);
             headerFrame.position(0);
             while (headerFrame.position() + (useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE
-                    + HT_TUPLE_REF_SIZE < frameSize) {
+                    + HT_TUPLE_REF_SIZE <= frameSize) {
                 if (useMiniBloomFilter) {
                     headerFrame.put((byte) 0);
                 }
