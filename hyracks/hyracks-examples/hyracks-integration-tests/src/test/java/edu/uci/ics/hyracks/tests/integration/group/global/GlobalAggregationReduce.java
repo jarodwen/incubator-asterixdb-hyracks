@@ -66,14 +66,14 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
 
     private final int[] keyFields = new int[] { 0 };
     private final int[] decorFields = new int[] {};
-    private final int framesLimit = 2048;
+    private final int framesLimit = 128;
     private final int groupStateInBytes = 37;
     private final double fudgeFactor = 1.4;
     private final boolean useBloomfilter = false;
     private final int[] ipMasks = new int[] { 0, 1, 2, 3, 5 };
-    private final long[] groupCounts = new long[] { 1000000000, 62500000 };// { 10000000, 9283319, 3607602, 244144, 4096
+    private final long[] groupCounts = new long[] { 10000000, 62500000 };// { 10000000, 9283319, 3607602, 244144, 4096
                                                                            // };
-    private final int inputDataOption = 1;
+    private final int inputDataOption = 0;
     private final boolean enableResidentPart = true;
     private final int minFramesPerResidentPart = 1;
 
@@ -82,12 +82,9 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
     private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.MAX_FIRST;
 
     final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
-            new FileSplit[] { new FileSplit(
-                    NC1_ID,
-                    new FileReference(
-                            new File(
-                            // "/Volumes/Home/Datasets/AggBench/v20130119/origin/z05_1000000000_10000000.dat"))) });
-                                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/z0_1000000000_1000000000_sorted.dat.shuffled.dat"))) });
+            new FileSplit[] { new FileSplit(NC1_ID, new FileReference(new File(
+                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/z05_1000000000_10000000.dat"))) });
+    // "/Volumes/Home/Datasets/AggBench/v20130119/origin/z0_1000000000_1000000000_sorted.dat.shuffled.dat"))) });
     // "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
 
     final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
@@ -141,10 +138,11 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
     @Test
     public void globalMapTest() throws Exception {
 
-        for (boolean enableResPart : new boolean[] { false })
-            for (boolean pinLastResidentPart : new boolean[] { false }) {
+        for (boolean enableResPart : new boolean[] { true })
+            for (boolean pinLastResidentPart : new boolean[] { true }) {
                 for (PartSpillStrategy spillStrategy : new PartSpillStrategy[] { PartSpillStrategy.MIN_ABSORB_FIRST }) {
-                    for (GroupAlgorithms grouperAlgo : new GroupAlgorithms[] { GroupAlgorithms.DYNAMIC_HYBRID_HASH_MAP }) {
+                    for (GroupAlgorithms grouperAlgo : new GroupAlgorithms[] {
+                            GroupAlgorithms.DYNAMIC_HYBRID_HASH_REDUCE, GroupAlgorithms.RECURSIVE_HYBRID_HASH }) {
 
                         JobSpecification spec = new JobSpecification();
 

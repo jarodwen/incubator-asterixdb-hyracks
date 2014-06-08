@@ -172,10 +172,20 @@ public class GlobalGroupBenchmarkingClient {
 
         for (int i = 0; i < options.runTimes; i++) {
             long start = System.currentTimeMillis();
-            job = createJob(parseFileSplits(options.inFileSplits), parseFileSplits(options.outFileSplits, i),
-                    frameSize, options.framesLimit, options.ipMask, options.inputCount, groupStateInBytes,
-                    options.groupCount, options.fudgeFactor, options.algo, options.useBloomfilter,
-                    options.enableResidentPart,
+            job = createJob(
+                    parseFileSplits(options.inFileSplits),
+                    parseFileSplits(options.outFileSplits, i),
+                    frameSize,
+                    options.framesLimit,
+                    options.ipMask,
+                    options.inputCount,
+                    groupStateInBytes,
+                    options.groupCount,
+                    options.fudgeFactor
+                            * ((double) groupStateInBytes
+                                    + (options.useBloomfilter ? LocalGroupOperatorDescriptor.HT_MINI_BLOOM_FILTER_SIZE
+                                            : 0) + LocalGroupOperatorDescriptor.HT_FRAME_REF_SIZE + LocalGroupOperatorDescriptor.HT_TUPLE_REF_SIZE)
+                            / groupStateInBytes, options.algo, options.useBloomfilter, options.enableResidentPart,
                     (options.framesLimit / MIN_FRAMES_PER_RES_PART > MAX_RES_PARTS ? options.framesLimit
                             / MAX_RES_PARTS : MIN_FRAMES_PER_RES_PART), options.pinLastResPart, options.spillStrategy);
 

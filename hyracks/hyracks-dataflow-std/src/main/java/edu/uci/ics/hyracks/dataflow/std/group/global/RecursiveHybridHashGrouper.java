@@ -301,6 +301,17 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             return;
         }
 
+        // try to estimate the collapsing ratio
+        long recordsLeft = 0;
+        for (long gr : groupsInRuns) {
+            recordsLeft += gr;
+        }
+        double recordsAbsorbedExpected = framesLimit / fudgeFactor * frameSize / groupStateSizeInBytes;
+        double recGroupRatio = (this.inputRecordCount - recordsLeft) / recordsAbsorbedExpected;
+        if (recGroupRatio < 1) {
+            recGroupRatio = 1;
+        }
+
         List<Integer> runLevels = new LinkedList<Integer>();
         List<Integer> runPartitions = new LinkedList<Integer>();
         for (int i = 0; i < runs.size(); i++) {
@@ -308,8 +319,11 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             if (grouper instanceof GracePartitioner) {
                 runPartitions.add(this.hybridHashSpilledPartitions);
             } else {
-                runPartitions.add(computeHybridHashSpilledPartitions(framesLimit, frameSize, groupsInRuns.get(i),
-                        groupStateSizeInBytes, 1, fudgeFactor, (useDynamicDestaging ? 2 : 1)));
+
+                int newPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize,
+                        (long) (groupsInRuns.get(i) / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor,
+                        (useDynamicDestaging ? 2 : 1));
+                runPartitions.add(newPartitions);
             }
         }
 
