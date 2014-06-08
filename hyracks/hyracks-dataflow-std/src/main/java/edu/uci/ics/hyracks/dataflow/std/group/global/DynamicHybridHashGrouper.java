@@ -118,6 +118,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      */
     private final int[] partitionBuffers;
 
+    private final int[] partitionBufferCounters;
+
     private final int[] partitionOutputBuffers;
 
     private final boolean[] partitionSpillingFlags;
@@ -228,6 +230,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
     private long debugBloomFilterSucc = 0, debugBloomFilterFail = 0;
 
+    public enum PartSpillStrategy {
+        MIN_FIRST,
+        MAX_FIRST,
+        MIN_ABSORB_FIRST
+    }
+
+    private final PartSpillStrategy spillStrategy;
+
     public DynamicHybridHashGrouper(
             IHyracksTaskContext ctx,
             int[] keyFields,
@@ -246,8 +256,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             int tableSize,
             int numParts,
             boolean useMiniBloomFilter,
-            boolean pinHighAbsorptionParts,
-            boolean alwaysPinLastPart) throws HyracksDataException {
+            boolean alwaysPinLastPart,
+            PartSpillStrategy partSpillStrategy) throws HyracksDataException {
 
         super(ctx, keyFields, decorFields, framesLimit, aggregatorFactory, mergerFactory, inRecordDescriptor,
                 outRecordDescriptor, enableHistorgram, outputWriter, isGenerateRuns);
@@ -271,6 +281,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
         this.useMiniBloomFilter = useMiniBloomFilter;
 
+        this.spillStrategy = partSpillStrategy;
+
         this.numParts = numParts;
         this.partitionBuffers = new int[this.numParts];
         this.partitionSpillingFlags = new boolean[this.numParts];
@@ -278,11 +290,13 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         this.partitionOutputBuffers = new int[this.numParts];
         this.recordsInParts = new long[this.numParts];
         this.groupsInParts = new long[this.numParts];
+        this.partitionBufferCounters = new int[this.numParts];
         for (int i = 0; i < this.numParts; i++) {
             this.partitionSpillingFlags[i] = false;
             this.partitionPinFlags[i] = false;
             this.partitionBuffers[i] = -1;
             this.partitionOutputBuffers[i] = -1;
+            this.partitionBufferCounters[i] = 0;
         }
         this.recordsInsertedForParts = new LinkedList<Long>();
         this.keysInsertedForParts = new LinkedList<Long>();
@@ -296,6 +310,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         // Reserve one frame for each partition
         for (int i = 0; i < this.numParts; i++) {
             this.partitionBuffers[i] = frameManager.allocateFrame();
+            this.partitionBufferCounters[i]++;
             if (this.partitionBuffers[i] < 0) {
                 throw new HyracksDataException("Not enough memory for " + this.numParts + " partitions.");
             }
@@ -609,6 +624,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             // no more free frames from the pool of the frame manager
             int partIDToSpill = pickPartitionToSpill();
             if (partIDToSpill >= 0) {
+                // Spill one partition
                 if (isGenerateRuns) {
                     if (this.partSpillRunWriters[partIDToSpill] == null) {
                         this.partSpillRunWriters[partIDToSpill] = new RunFileWriter(
@@ -635,6 +651,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         if (!this.partitionSpillingFlags[partID] && newFrameID >= 0) {
             frameManager.setNextFrame(newFrameID, this.partitionBuffers[partID]);
             this.partitionBuffers[partID] = newFrameID;
+            this.partitionBufferCounters[partID]++;
             return true;
         } else {
             if (this.unpinnedSpilledParts.size() == this.numParts - 1) {
@@ -646,29 +663,51 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
     private int pickPartitionToSpill() {
         int partIDToSpill = -1;
-
+        boolean pickMin = true;
         int partsInMem = 0;
-        double minAbsorptionRatio = Integer.MAX_VALUE;
 
-        for (int i = 0; i < this.numParts; i++) {
-            if (this.partitionSpillingFlags[i]) {
-                continue;
-            }
-            partsInMem++;
-            double currentAbsorptionRatio = (this.groupsInParts[i] == 0) ? 0 : this.recordsInParts[i]
-                    / this.groupsInParts[i];
-            if (currentAbsorptionRatio < minAbsorptionRatio) {
-                minAbsorptionRatio = currentAbsorptionRatio;
-                partIDToSpill = i;
-            }
+        switch (this.spillStrategy) {
+            case MAX_FIRST:
+                pickMin = false;
+            case MIN_FIRST:
+                pickMin = true;
+                int partBufCount = pickMin ? Integer.MAX_VALUE : Integer.MIN_VALUE;
+                for (int i = 0; i < this.numParts; i++) {
+                    if (this.partitionSpillingFlags[i]) {
+                        continue;
+                    }
+                    partsInMem++;
+                    if (pickMin ? (this.partitionBufferCounters[i] <= partBufCount)
+                            : (this.partitionBufferCounters[i] >= partBufCount)) {
+                        partIDToSpill = i;
+                        partBufCount = this.partitionBufferCounters[i];
+                    }
+                }
+                break;
+            case MIN_ABSORB_FIRST:
+            default:
+                double minAbsorptionRatio = Integer.MAX_VALUE;
+
+                for (int i = 0; i < this.numParts; i++) {
+                    if (this.partitionSpillingFlags[i]) {
+                        continue;
+                    }
+                    partsInMem++;
+                    double currentAbsorptionRatio = (this.groupsInParts[i] == 0) ? 0 : this.recordsInParts[i]
+                            / this.groupsInParts[i];
+                    if (currentAbsorptionRatio < minAbsorptionRatio) {
+                        minAbsorptionRatio = currentAbsorptionRatio;
+                        partIDToSpill = i;
+                    }
+                }
         }
-
+        // Only one partition is left: pin this partition if required, and use the hash table output buffer for it
         if (partsInMem == 1 && this.pinLastPartitionAlways) {
-            // Only one partition is left: pin this partition, and use the hash table output buffer for it
             this.partitionPinFlags[partIDToSpill] = true;
             this.isHashtableFull = true;
             partIDToSpill = -1;
         }
+
         return partIDToSpill;
     }
 
@@ -817,6 +856,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 workingFrameID = frameManager.getNextFrame(workingFrameID);
                 if (workingFrameID >= 0) {
                     frameManager.recycleFrame(prevFrameID);
+                    this.partitionBufferCounters[partitionIndex]--;
                     this.partitionBuffers[partitionIndex] = workingFrameID;
                     bufToFlush = frameManager.getFrame(workingFrameID);
 
@@ -850,11 +890,13 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             outputFrameTupleAppender.reset(frameManager.getFrame(hashtableOutputBuffer), true);
         }
 
+        // Mark the partition as spilled, if it has not been spilled before
         if (!this.partitionSpillingFlags[partitionIndex]) {
             this.partitionSpillingFlags[partitionIndex] = true;
             this.partitionOutputBuffers[partitionIndex] = prevFrameID;
             this.frameManager.resetFrame(this.partitionOutputBuffers[partitionIndex]);
             this.partitionBuffers[partitionIndex] = -1;
+            this.partitionBuffers[partitionIndex] = 1;
             if (!this.partitionPinFlags[partitionIndex]) {
                 this.unpinnedSpilledParts.add(partitionIndex);
             }
@@ -873,12 +915,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         }
 
         // do bloom filter lookup, if bloom filter is enabled.
-        if (useMiniBloomFilter) {
-            if (!lookupBloomFilter(rawHashValue, bloomFilterByte)) {
-                debugBloomFilterFail++;
-                return false;
-            } else {
-                debugBloomFilterSucc++;
+        if (this.isHashtableFull) {
+            if (useMiniBloomFilter) {
+                if (!lookupBloomFilter(rawHashValue, bloomFilterByte)) {
+                    debugBloomFilterFail++;
+                    return false;
+                } else {
+                    debugBloomFilterSucc++;
+                }
             }
         }
 

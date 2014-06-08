@@ -60,6 +60,7 @@ import edu.uci.ics.hyracks.dataflow.std.group.aggregators.DoubleSumFieldAggregat
 import edu.uci.ics.hyracks.dataflow.std.group.aggregators.IntSumFieldAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.aggregators.MultiFieldsAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor;
+import edu.uci.ics.hyracks.dataflow.std.group.global.DynamicHybridHashGrouper.PartSpillStrategy;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor.GroupAlgorithms;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IPv6MarkStringParserFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.SimpleUniformDataPartitionDescriptor;
@@ -104,6 +105,11 @@ public class GlobalGroupBenchmarkingClient {
                 required = false)
         public boolean enableResidentPart = false;
 
+        @Option(name = "-spill-strategy",
+                usage = "The spilling strategy used for resident partitions in hyrid-hash algorithms (default: false)",
+                required = false)
+        public int spillStrategy = 2;
+
         @Option(name = "-ip-mask", usage = "The IP address mask to be applied for the key field", required = true)
         public int ipMask;
 
@@ -116,11 +122,8 @@ public class GlobalGroupBenchmarkingClient {
         @Option(name = "-run-times", usage = "The number of runs for benchmarking", required = false)
         public int runTimes = 3;
 
-        @Option(name = "-min-frames", usage = "The minimum number of frames for resident partition", required = false)
-        public int minFramesPerResidentPart = 3;
-
-        @Option(name = "-flip-bit", usage = "The minimum number of frames for resident partition", required = false)
-        public boolean maskFlipBit = false;
+        @Option(name = "-pin-last-res", usage = "Pin the last resident partition", required = false)
+        public boolean pinLastResPart = false;
 
     }
 
@@ -128,6 +131,9 @@ public class GlobalGroupBenchmarkingClient {
     private static final int[] decorFields = new int[] {};
     private static final int groupStateInBytes = 37;
     private static final int frameSize = 32768;
+
+    private static final int MIN_FRAMES_PER_RES_PART = 16;
+    private static final int MAX_RES_PARTS = 50;
 
     private static final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
             UTF8StringSerializerDeserializer.INSTANCE, DoubleSerializerDeserializer.INSTANCE });
@@ -156,7 +162,6 @@ public class GlobalGroupBenchmarkingClient {
         URL[] urls = classLoader.getURLs();
         for (URL url : urls) {
             if (url.toString().endsWith(".jar")) {
-                System.out.println("[INFO] Deploying jar: " + url.toString());
                 jars.add(new File(url.getPath()).getAbsolutePath());
             }
         }
@@ -170,11 +175,14 @@ public class GlobalGroupBenchmarkingClient {
             job = createJob(parseFileSplits(options.inFileSplits), parseFileSplits(options.outFileSplits, i),
                     frameSize, options.framesLimit, options.ipMask, options.inputCount, groupStateInBytes,
                     options.groupCount, options.fudgeFactor, options.algo, options.useBloomfilter,
-                    options.enableResidentPart, options.minFramesPerResidentPart, options.maskFlipBit);
+                    options.enableResidentPart,
+                    (options.framesLimit / MIN_FRAMES_PER_RES_PART > MAX_RES_PARTS ? options.framesLimit
+                            / MAX_RES_PARTS : MIN_FRAMES_PER_RES_PART), options.pinLastResPart, options.spillStrategy);
 
             start = System.currentTimeMillis();
             JobId jobId = hcc.startJob(deployID, job);
             hcc.waitForCompletion(jobId);
+
             System.out.println("alg-" + options.algo + "\t" + (System.currentTimeMillis() - start));
         }
     }
@@ -225,12 +233,13 @@ public class GlobalGroupBenchmarkingClient {
             boolean useBloomfilter,
             boolean enableResidentPart,
             int minFramesPerResidentPart,
-            boolean maskFlipBit) throws HyracksDataException {
+            boolean pinLastResPart,
+            int spillStrategy) throws HyracksDataException {
         JobSpecification spec = new JobSpecification(frameSize);
         IFileSplitProvider splitsProvider = new ConstantFileSplitProvider(inSplits);
 
         ITupleParserFactory tupleParserFactory = new DelimitedDataTupleParserFactory(new IValueParserFactory[] {
-                IPv6MarkStringParserFactory.getInstance(ipMask, maskFlipBit), DoubleParserFactory.INSTANCE }, '|');
+                IPv6MarkStringParserFactory.getInstance(ipMask), DoubleParserFactory.INSTANCE }, '|');
 
         FileScanOperatorDescriptor csvScanner = new FileScanOperatorDescriptor(spec, splitsProvider,
                 tupleParserFactory, inDesc);
@@ -239,6 +248,20 @@ public class GlobalGroupBenchmarkingClient {
 
         SimpleUniformDataPartitionDescriptor dataPartitionDesc = new SimpleUniformDataPartitionDescriptor(inputCount,
                 new long[] { groupCount }, 1, new int[] { 0 });
+
+        PartSpillStrategy partSpillStrategy;
+
+        switch (spillStrategy) {
+            case 0:
+                partSpillStrategy = PartSpillStrategy.MIN_FIRST;
+                break;
+            case 1:
+                partSpillStrategy = PartSpillStrategy.MAX_FIRST;
+                break;
+            default:
+                partSpillStrategy = PartSpillStrategy.MIN_ABSORB_FIRST;
+
+        }
 
         GroupAlgorithms selectedAlg;
 
@@ -284,7 +307,7 @@ public class GlobalGroupBenchmarkingClient {
                 new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
                         new DoubleSumFieldAggregatorFactory(keyFields.length, false),
                         new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc, selectedAlg, 0,
-                useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart, partSpillStrategy);
 
         createPartitionConstraint(spec, grouper, inSplits);
 

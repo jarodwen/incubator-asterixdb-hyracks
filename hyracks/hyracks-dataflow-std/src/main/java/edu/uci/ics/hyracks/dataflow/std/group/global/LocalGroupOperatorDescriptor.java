@@ -32,6 +32,7 @@ import edu.uci.ics.hyracks.api.job.IOperatorDescriptorRegistry;
 import edu.uci.ics.hyracks.dataflow.std.base.AbstractSingleActivityOperatorDescriptor;
 import edu.uci.ics.hyracks.dataflow.std.base.AbstractUnaryInputUnaryOutputOperatorNodePushable;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
+import edu.uci.ics.hyracks.dataflow.std.group.global.DynamicHybridHashGrouper.PartSpillStrategy;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashFunctionFamilyFactoryAdapter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.IDataPartitionDescriptor;
 
@@ -116,6 +117,16 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
     private final int minFramesPerResidentPart;
 
     /**
+     * The strategy for picking a resident partition for spilling
+     */
+    private final PartSpillStrategy spillStrategy;
+
+    /**
+     * The flag on whether to pin the last resident partition in memory
+     */
+    private final boolean pinLastResidentPart;
+
+    /**
      * Three group-by output states
      */
     public enum GroupOutputState {
@@ -185,7 +196,9 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             int levelSeed,
             boolean bloomfilterHash,
             boolean enableResidentPart,
-            int minFramesPerResPart) throws HyracksDataException {
+            int minFramesPerResPart,
+            boolean pinLastResidentPart,
+            PartSpillStrategy spillStrategy) throws HyracksDataException {
         super(spec, 1, 1);
         this.framesLimit = framesLimit;
         this.useBloomfilterForHashtable = bloomfilterHash;
@@ -210,6 +223,9 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         this.groupStateSizeInBytes = groupStateSizeInBytes;
         this.fudgeFactor = fudgeFactor;
         this.enableResidentPart = enableResidentPart;
+        this.pinLastResidentPart = pinLastResidentPart;
+
+        this.spillStrategy = spillStrategy;
     }
 
     /**
@@ -346,7 +362,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case HASH_GROUP:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, false,
                                 HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 1);
                         grouper = new HashGrouper(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize,
@@ -354,7 +370,7 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                         break;
                     case HASH_GROUP_SORT_MERGE_GROUP:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
-                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, useBloomfilterForHashtable,
+                                HT_SLOT_CAP_RATIO, HT_FRAME_REF_SIZE, HT_TUPLE_REF_SIZE, false,
                                 HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 1);
                         grouper = new HashGroupSortMergeGrouper(ctx, keyFields, decorFields, framesLimit, tableSize,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
@@ -368,7 +384,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
                                 RecursiveHybridHashGrouper.computeHybridHashResidentPartitions(framesLimit, 1,
-                                        minFramesPerResidentPart), true, false, true, enableResidentPart);
+                                        minFramesPerResidentPart), useBloomfilterForHashtable, enableResidentPart,
+                                spillStrategy);
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
@@ -378,7 +395,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, false,
-                                enableResidentPart, useBloomfilterForHashtable, minFramesPerResidentPart);
+                                enableResidentPart, useBloomfilterForHashtable, minFramesPerResidentPart,
+                                pinLastResidentPart, spillStrategy);
                         break;
                     case PRECLUSTER:
                         grouper = new PreCluster(ctx, keyFields, decorFields, framesLimit, aggregatorFactory,
@@ -390,8 +408,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 HT_MINI_BLOOM_FILTER_SIZE, framesLimit, 2);
                         grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
-                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 2, true,
-                                false, true);
+                                finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 2,
+                                useBloomfilterForHashtable, pinLastResidentPart, spillStrategy);
                         break;
                     case DYNAMIC_HYBRID_HASH_REDUCE:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,
@@ -401,7 +419,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 recordsInPartition, groupsInPartitions, groupStateSizeInBytes, fudgeFactor,
                                 firstNormalizerFactory, comparatorFactories, hashFamilies, aggregatorFactory,
                                 partialMergerFactory, finalMergerFactory, inRecDesc, outRecDesc, 0, writer, true,
-                                enableResidentPart, useBloomfilterForHashtable, minFramesPerResidentPart);
+                                enableResidentPart, useBloomfilterForHashtable, minFramesPerResidentPart,
+                                pinLastResidentPart, spillStrategy);
                         break;
                     case SORT_GROUP_MERGE_GROUP:
                     default:

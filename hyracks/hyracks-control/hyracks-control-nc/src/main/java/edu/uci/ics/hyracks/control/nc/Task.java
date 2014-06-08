@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
+import java.util.logging.Logger;
 
 import edu.uci.ics.hyracks.api.comm.IFrameReader;
 import edu.uci.ics.hyracks.api.comm.IFrameWriter;
@@ -89,7 +90,12 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
 
     private NodeControllerService ncs;
 
-    public Task(Joblet joblet, TaskAttemptId taskId, String displayName, Executor executor, NodeControllerService ncs) {
+    public Task(
+            Joblet joblet,
+            TaskAttemptId taskId,
+            String displayName,
+            Executor executor,
+            NodeControllerService ncs) {
         this.joblet = joblet;
         this.taskAttemptId = taskId;
         this.displayName = displayName;
@@ -104,7 +110,9 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
         this.ncs = ncs;
     }
 
-    public void setTaskRuntime(IPartitionCollector[] collectors, IOperatorNodePushable operator) {
+    public void setTaskRuntime(
+            IPartitionCollector[] collectors,
+            IOperatorNodePushable operator) {
         this.collectors = collectors;
         this.operator = operator;
     }
@@ -113,9 +121,10 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
     public ByteBuffer allocateFrame() throws HyracksDataException {
         return joblet.allocateFrame();
     }
-    
+
     @Override
-    public void deallocateFrames(int frameCount) {
+    public void deallocateFrames(
+            int frameCount) {
         joblet.deallocateFrames(frameCount);
     }
 
@@ -130,17 +139,20 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
     }
 
     @Override
-    public FileReference createUnmanagedWorkspaceFile(String prefix) throws HyracksDataException {
+    public FileReference createUnmanagedWorkspaceFile(
+            String prefix) throws HyracksDataException {
         return fileFactory.createUnmanagedWorkspaceFile(prefix);
     }
 
     @Override
-    public FileReference createManagedWorkspaceFile(String prefix) throws HyracksDataException {
+    public FileReference createManagedWorkspaceFile(
+            String prefix) throws HyracksDataException {
         return fileFactory.createManagedWorkspaceFile(prefix);
     }
 
     @Override
-    public void registerDeallocatable(IDeallocatable deallocatable) {
+    public void registerDeallocatable(
+            IDeallocatable deallocatable) {
         deallocatableRegistry.registerDeallocatable(deallocatable);
     }
 
@@ -159,7 +171,9 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
     }
 
     @Override
-    public ICounter getCounter(String name, boolean create) {
+    public ICounter getCounter(
+            String name,
+            boolean create) {
         Counter counter = counterMap.get(name);
         if (counter == null && create) {
             counter = new Counter(name);
@@ -181,14 +195,34 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
         return partitionSendProfile;
     }
 
-    public synchronized void dumpProfile(TaskProfile tProfile) {
+    private static final Logger LOGGER = Logger.getLogger(Task.class.getName());
+
+    public synchronized void dumpProfile(
+            TaskProfile tProfile) {
         Map<String, Long> dumpMap = tProfile.getCounters();
+        // FIXME [jarodwen] remove the log dump info
+        double dumpCPU = 0, dumpIO = 0, dumpTime = 0, dumpRecs = 0;
         for (Counter c : counterMap.values()) {
+            if (c.getName().contains("required.cpu")) {
+                dumpCPU += c.get();
+            } else if (c.getName().contains("required.io.out")) {
+                dumpIO += c.get();
+            } else if (c.getName().contains("optional.elapsedTime")) {
+                dumpTime += c.get();
+            } else if (c.getName().contains("required.out.records")) {
+                dumpRecs += c.get();
+            }
             dumpMap.put(c.getName(), c.get());
         }
+        if (dumpTime > 0) {
+            LOGGER.warning(System.currentTimeMillis() + "\t" + dumpTime + "\t" + dumpRecs + "\t" + dumpCPU + "\t"
+                    + dumpIO);
+        }
+
     }
 
-    public void setPartitionSendProfile(PartitionProfile profile) {
+    public void setPartitionSendProfile(
+            PartitionProfile profile) {
         partitionSendProfile.put(profile.getPartitionId(), profile);
     }
 
@@ -207,11 +241,13 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
         }
     }
 
-    private synchronized void addPendingThread(Thread t) {
+    private synchronized void addPendingThread(
+            Thread t) {
         pendingThreads.add(t);
     }
 
-    private synchronized void removePendingThread(Thread t) {
+    private synchronized void removePendingThread(
+            Thread t) {
         pendingThreads.remove(t);
         if (pendingThreads.isEmpty()) {
             notifyAll();
@@ -242,7 +278,7 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
                         final int cIdx = i;
                         executor.execute(new Runnable() {
                             @Override
-							public void run() {
+                            public void run() {
                                 if (aborted) {
                                     return;
                                 }
@@ -293,7 +329,9 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
         }
     }
 
-    private void pushFrames(IPartitionCollector collector, IFrameWriter writer) throws HyracksDataException {
+    private void pushFrames(
+            IPartitionCollector collector,
+            IFrameWriter writer) throws HyracksDataException {
         if (aborted) {
             return;
         }
@@ -336,12 +374,14 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
     }
 
     @Override
-    public void setStateObject(IStateObject taskState) {
+    public void setStateObject(
+            IStateObject taskState) {
         opEnv.setStateObject(taskState);
     }
 
     @Override
-    public IStateObject getStateObject(Object id) {
+    public IStateObject getStateObject(
+            Object id) {
         return opEnv.getStateObject(id);
     }
 
@@ -351,7 +391,10 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
     }
 
     @Override
-    public void sendApplicationMessageToCC(byte[] message, DeploymentId deploymentId, String nodeId) throws Exception {
+    public void sendApplicationMessageToCC(
+            byte[] message,
+            DeploymentId deploymentId,
+            String nodeId) throws Exception {
         this.ncs.sendApplicationMessageToCC(message, deploymentId, nodeId);
     }
 }

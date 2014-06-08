@@ -28,6 +28,7 @@ import edu.uci.ics.hyracks.api.dataflow.value.RecordDescriptor;
 import edu.uci.ics.hyracks.api.exceptions.HyracksDataException;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileReader;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
+import edu.uci.ics.hyracks.dataflow.std.group.global.DynamicHybridHashGrouper.PartSpillStrategy;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IFrameWriterRunGenerator;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection;
@@ -73,7 +74,21 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
     private int maxRecursionLevel;
 
+    /**
+     * The minimum number of frames per resident partition. This is used to
+     * compute the number of resident partitions.
+     */
     private final int minFramesPerResPart;
+
+    /**
+     * Whether the last resident partition should be pinned in the dynamic-destaging algorithm.
+     */
+    private final boolean pinLastResidentPart;
+
+    /**
+     * The strategy to pick the next partition to spill
+     */
+    private PartSpillStrategy partSpillStrategy;
 
     private final OperatorDebugCounterCollection debugCounters;
 
@@ -102,7 +117,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             boolean useDynamic,
             boolean enableResidentPart,
             boolean useBloomfilter,
-            int minFramesPerResPart) throws HyracksDataException {
+            int minFramesPerResPart,
+            boolean pinLastResPart,
+            PartSpillStrategy partSpillStrategy) throws HyracksDataException {
         this.ctx = ctx;
         this.keyFields = keyFields;
         this.decorFields = decorFields;
@@ -130,6 +147,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         this.useDynamicDestaging = useDynamic;
         this.enableResidentPart = enableResidentPart;
         this.useBloomfilter = useBloomfilter;
+        this.pinLastResidentPart = pinLastResPart;
+
+        this.partSpillStrategy = partSpillStrategy;
 
         this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
                 + "." + String.valueOf(Thread.currentThread().getId()));
@@ -172,13 +192,13 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                 grouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                         this.firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                         finalMergerFactory, inRecordDesc, outRecordDesc, false, outputWriter, true, tableSize,
-                        hybridHashSpilledPartitions, true, false, true);
+                        hybridHashSpilledPartitions, useBloomfilter, pinLastResidentPart, partSpillStrategy);
             } else {
                 grouper = new HybridHashGrouper(ctx, keyFields, decorFields, framesLimit,
                         this.firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                         finalMergerFactory, inRecordDesc, outRecordDesc, false, outputWriter, true, tableSize,
-                        hybridHashSpilledPartitions, hybridHashResidentPartitions, true, false, true,
-                        enableResidentPart);
+                        hybridHashSpilledPartitions, hybridHashResidentPartitions, useBloomfilter, enableResidentPart,
+                        partSpillStrategy);
             }
         }
         grouper.open();
@@ -378,13 +398,14 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                     hybridHashGrouper = new DynamicHybridHashGrouper(ctx, keyFields, decorFieldsInGroupState,
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             aggregatorFactory, partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter,
-                            true, newTableSize, runPartition, this.useBloomfilter, false, true);
+                            true, newTableSize, runPartition, this.useBloomfilter, pinLastResidentPart,
+                            partSpillStrategy);
                 } else {
                     hybridHashGrouper = new HybridHashGrouper(ctx, keyFields, decorFieldsInGroupState, framesLimit,
                             firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                             partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter, true, newTableSize,
                             runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition,
-                                    minFramesPerResPart), this.useBloomfilter, false, true, enableResidentPart);
+                                    minFramesPerResPart), this.useBloomfilter, enableResidentPart, partSpillStrategy);
                 }
                 originalRunsCount--;
             } else {
@@ -392,13 +413,15 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                     hybridHashGrouper = new DynamicHybridHashGrouper(ctx, keyFieldsInGroupState,
                             decorFieldsInGroupState, framesLimit, firstKeyNormalizerFactory, comparatorFactories,
                             hashFunctionFactories, partialMergerFactory, finalMergerFactory, outRecordDesc,
-                            outRecordDesc, true, outputWriter, true, newTableSize, runPartition, true, false, true);
+                            outRecordDesc, true, outputWriter, true, newTableSize, runPartition, this.useBloomfilter,
+                            pinLastResidentPart, partSpillStrategy);
                 } else {
                     hybridHashGrouper = new HybridHashGrouper(ctx, keyFieldsInGroupState, decorFieldsInGroupState,
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
                             true, newTableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
-                                    runPartition, minFramesPerResPart), true, false, true, enableResidentPart);
+                                    runPartition, minFramesPerResPart), useBloomfilter, enableResidentPart,
+                            partSpillStrategy);
                 }
             }
 

@@ -96,8 +96,12 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
 
     private boolean cleanupPending;
 
-    public Joblet(NodeControllerService nodeController, DeploymentId deploymentId, JobId jobId,
-            INCApplicationContext appCtx, ActivityClusterGraph acg) {
+    public Joblet(
+            NodeControllerService nodeController,
+            DeploymentId deploymentId,
+            JobId jobId,
+            INCApplicationContext appCtx,
+            ActivityClusterGraph acg) {
         this.nodeController = nodeController;
         this.appCtx = appCtx;
         this.deploymentId = deploymentId;
@@ -138,11 +142,13 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         return env;
     }
 
-    public void addTask(Task task) {
+    public void addTask(
+            Task task) {
         taskMap.put(task.getTaskAttemptId(), task);
     }
 
-    public void removeTask(Task task) {
+    public void removeTask(
+            Task task) {
         taskMap.remove(task.getTaskAttemptId());
         if (cleanupPending && taskMap.isEmpty()) {
             performCleanup();
@@ -156,7 +162,8 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
     private final class OperatorEnvironmentImpl implements IOperatorEnvironment {
         private final String nodeId;
 
-        public OperatorEnvironmentImpl(String nodeId) {
+        public OperatorEnvironmentImpl(
+                String nodeId) {
             this.nodeId = nodeId;
         }
 
@@ -165,12 +172,14 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         }
 
         @Override
-        public synchronized void setStateObject(IStateObject taskState) {
+        public synchronized void setStateObject(
+                IStateObject taskState) {
             stateObjectMap.put(taskState.getId(), taskState);
         }
 
         @Override
-        public synchronized IStateObject getStateObject(Object id) {
+        public synchronized IStateObject getStateObject(
+                Object id) {
             return stateObjectMap.get(id);
         }
     }
@@ -179,11 +188,13 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         return nodeController;
     }
 
-    public void dumpProfile(JobletProfile jProfile) {
+    public void dumpProfile(
+            JobletProfile jProfile) {
         Map<String, Long> counters = jProfile.getCounters();
         for (Map.Entry<String, Counter> e : counterMap.entrySet()) {
             counters.put(e.getKey(), e.getValue().get());
         }
+
         for (Task task : taskMap.values()) {
             TaskProfile taskProfile = new TaskProfile(task.getTaskAttemptId(),
                     new Hashtable<PartitionId, PartitionProfile>(task.getPartitionSendProfile()));
@@ -203,7 +214,8 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
     }
 
     @Override
-    public void registerDeallocatable(IDeallocatable deallocatable) {
+    public void registerDeallocatable(
+            IDeallocatable deallocatable) {
         deallocatableRegistry.registerDeallocatable(deallocatable);
     }
 
@@ -229,7 +241,8 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         throw new HyracksDataException("Unable to allocate frame: Not enough memory");
     }
 
-    public void deallocateFrames(int nFrames) {
+    public void deallocateFrames(
+            int nFrames) {
         memoryAllocation.addAndGet(nFrames * frameSize);
         appCtx.getMemoryManager().deallocate(nFrames * frameSize);
     }
@@ -243,17 +256,21 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
     }
 
     @Override
-    public FileReference createManagedWorkspaceFile(String prefix) throws HyracksDataException {
+    public FileReference createManagedWorkspaceFile(
+            String prefix) throws HyracksDataException {
         return fileFactory.createManagedWorkspaceFile(prefix);
     }
 
     @Override
-    public FileReference createUnmanagedWorkspaceFile(String prefix) throws HyracksDataException {
+    public FileReference createUnmanagedWorkspaceFile(
+            String prefix) throws HyracksDataException {
         return fileFactory.createUnmanagedWorkspaceFile(prefix);
     }
 
     @Override
-    public synchronized ICounter getCounter(String name, boolean create) {
+    public synchronized ICounter getCounter(
+            String name,
+            boolean create) {
         Counter counter = counterMap.get(name);
         if (counter == null && create) {
             counter = new Counter(name);
@@ -267,8 +284,11 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         return globalJobData;
     }
 
-    public synchronized void advertisePartitionRequest(TaskAttemptId taId, Collection<PartitionId> pids,
-            IPartitionCollector collector, PartitionState minState) throws Exception {
+    public synchronized void advertisePartitionRequest(
+            TaskAttemptId taId,
+            Collection<PartitionId> pids,
+            IPartitionCollector collector,
+            PartitionState minState) throws Exception {
         for (PartitionId pid : pids) {
             partitionRequestMap.put(pid, collector);
             PartitionRequest req = new PartitionRequest(pid, nodeController.getId(), taId, minState);
@@ -276,7 +296,8 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         }
     }
 
-    public synchronized void reportPartitionAvailability(PartitionChannel channel) throws HyracksException {
+    public synchronized void reportPartitionAvailability(
+            PartitionChannel channel) throws HyracksException {
         IPartitionCollector collector = partitionRequestMap.get(channel.getPartitionId());
         if (collector != null) {
             collector.addPartitions(Collections.singleton(channel));
@@ -287,7 +308,8 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
         return jobletEventListener;
     }
 
-    public void cleanup(JobStatus status) {
+    public void cleanup(
+            JobStatus status) {
         cleanupStatus = status;
         cleanupPending = true;
         if (taskMap.isEmpty()) {
@@ -311,7 +333,8 @@ public class Joblet implements IHyracksJobletContext, ICounterContext {
     }
 
     @Override
-    public Class<?> loadClass(String className) {
+    public Class<?> loadClass(
+            String className) {
         try {
             return DeploymentUtils.loadClass(className, deploymentId, appCtx);
         } catch (Exception e) {

@@ -58,6 +58,7 @@ import edu.uci.ics.hyracks.dataflow.std.group.aggregators.IntSumFieldAggregatorF
 import edu.uci.ics.hyracks.dataflow.std.group.aggregators.MinMaxStringFieldAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.aggregators.MultiFieldsAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor;
+import edu.uci.ics.hyracks.dataflow.std.group.global.DynamicHybridHashGrouper.PartSpillStrategy;
 import edu.uci.ics.hyracks.dataflow.std.group.global.aggregators.AvgFieldAggregateAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.aggregators.AvgFieldFinalMergeAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.aggregators.AvgFieldPartialMergeAggregatorFactory;
@@ -97,6 +98,10 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
 
     private final SimpleUniformDataPartitionDescriptor dataPartitionDesc = new SimpleUniformDataPartitionDescriptor(
             600571, new long[] { 1500, 2807 }, 1, new int[] { 0 });
+
+    private final boolean pinLastResPart = true;
+
+    private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.MIN_ABSORB_FIRST;
 
     private final boolean enableResidentPart = false;
 
@@ -182,7 +187,8 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
                         new AvgFieldPartialMergeAggregatorFactory(keyFields.length + 4, false),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 5, true, true),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 6, false, true) }), outputRec,
-                localGrouper, 0, useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                localGrouper, 0, useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart,
+                partSpillStrategy);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper0, NC1_ID, NC2_ID);
 
@@ -217,7 +223,8 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
                         new AvgFieldFinalMergeAggregatorFactory(keyFields.length + 4, false),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 5, true, true),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 6, false, true) }), outputRec,
-                globalGrouper, 1, useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                globalGrouper, 1, useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart,
+                partSpillStrategy);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper1, NC1_ID, NC2_ID);
 
@@ -283,7 +290,8 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
                         new AvgFieldPartialMergeAggregatorFactory(keyFields.length + 4, false),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 5, true, true),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 6, false, true) }), outputRec,
-                localGrouper, 0, useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                localGrouper, 0, useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart,
+                partSpillStrategy);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper0, NC1_ID, NC2_ID);
 
@@ -319,7 +327,8 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
                         new AvgFieldFinalMergeAggregatorFactory(keyFields.length + 4, false),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 5, true, true),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 6, false, true) }), outputRec,
-                globalGrouper, 1, useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                globalGrouper, 1, useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart,
+                partSpillStrategy);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper1, NC1_ID, NC2_ID);
 
@@ -392,7 +401,8 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
                         new AvgFieldPartialMergeAggregatorFactory(keyFields.length + 4, false),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 5, true, true),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 6, false, true) }), outputRec,
-                localGrouper, 0, useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                localGrouper, 0, useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart,
+                partSpillStrategy);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper0, NC1_ID, NC2_ID);
 
@@ -430,7 +440,8 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
                         new AvgFieldFinalMergeAggregatorFactory(keyFields.length + 4, false),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 5, true, true),
                         new MinMaxStringFieldAggregatorFactory(keyFields.length + 6, false, true) }), outputRec,
-                globalGrouper, 1, useBloomfilter, enableResidentPart, minFramesPerResidentPart);
+                globalGrouper, 1, useBloomfilter, enableResidentPart, minFramesPerResidentPart, pinLastResPart,
+                partSpillStrategy);
 
         PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper1, NC1_ID, NC2_ID);
 

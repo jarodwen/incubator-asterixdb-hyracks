@@ -56,6 +56,7 @@ import edu.uci.ics.hyracks.dataflow.std.group.aggregators.DoubleSumFieldAggregat
 import edu.uci.ics.hyracks.dataflow.std.group.aggregators.IntSumFieldAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.aggregators.MultiFieldsAggregatorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor;
+import edu.uci.ics.hyracks.dataflow.std.group.global.DynamicHybridHashGrouper.PartSpillStrategy;
 import edu.uci.ics.hyracks.dataflow.std.group.global.LocalGroupOperatorDescriptor.GroupAlgorithms;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IPv6MarkStringParserFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.SimpleUniformDataPartitionDescriptor;
@@ -65,23 +66,24 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
 
     private final int[] keyFields = new int[] { 0 };
     private final int[] decorFields = new int[] {};
-    private final int framesLimit = 131072;
+    private final int framesLimit = 4096;
     private final int groupStateInBytes = 37;
     private final double fudgeFactor = 1.4;
     private final boolean useBloomfilter = true;
     private final int[] ipMasks = new int[] { 0, 1, 2, 3, 5 };
     private final long[] groupCounts = new long[] { 10000000, 9283319, 3607602, 244144, 4096 };
-    private final int inputDataOption = 1;
-    private final boolean enableResidentPart = false;
+    private final int inputDataOption = 2;
+    private final boolean enableResidentPart = true;
     private final int minFramesPerResidentPart = 1;
 
+    private final boolean pinLastResPart = true;
+
+    private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.MAX_FIRST;
+
     final IFileSplitProvider splitProvider = new ConstantFileSplitProvider(
-            new FileSplit[] { new FileSplit(
-                    NC1_ID,
-                    new FileReference(
-                            new File(
-                             //"/Volumes/Home/Datasets/AggBench/v20130119/origin/z05_1000000000_10000000.dat"))) });
-                                    "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
+            new FileSplit[] { new FileSplit(NC1_ID, new FileReference(new File(
+                    "/Volumes/Home/Datasets/AggBench/v20130119/origin/z05_1000000000_10000000.dat"))) });
+    // "/Volumes/Home/Datasets/AggBench/v20130119/small/z0_1000000000_1000000000_sorted.dat.shuffled.dat.small"))) });
 
     final RecordDescriptor inDesc = new RecordDescriptor(new ISerializerDeserializer[] {
             UTF8StringSerializerDeserializer.INSTANCE, DoubleSerializerDeserializer.INSTANCE });
@@ -91,7 +93,8 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
             IntegerSerializerDeserializer.INSTANCE });
 
     final ITupleParserFactory tupleParserFactory = new DelimitedDataTupleParserFactory(new IValueParserFactory[] {
-            IPv6MarkStringParserFactory.getInstance(ipMasks[inputDataOption], true), DoubleParserFactory.INSTANCE }, '|');
+            IPv6MarkStringParserFactory.getInstance(ipMasks[inputDataOption], true), DoubleParserFactory.INSTANCE },
+            '|');
 
     private final SimpleUniformDataPartitionDescriptor dataPartitionDesc = new SimpleUniformDataPartitionDescriptor(
             1000000000, new long[] { groupCounts[inputDataOption] }, 1, new int[] { 0 });
@@ -133,47 +136,55 @@ public class GlobalAggregationReduce extends AbstractIntegrationTest {
     @Test
     public void globalMapTest() throws Exception {
 
-        for (GroupAlgorithms grouperAlgo : GroupAlgorithms.values()) {
+        for (boolean enableResPart : new boolean[] { true, false })
+            for (boolean pinLastResidentPart : new boolean[] { true }) {
+                for (PartSpillStrategy spillStrategy : new PartSpillStrategy[] { PartSpillStrategy.MIN_ABSORB_FIRST }) {
+                    for (GroupAlgorithms grouperAlgo : new GroupAlgorithms[] { GroupAlgorithms.SIMPLE_HYBRID_HASH }) {
 
-            if (grouperAlgo != GroupAlgorithms.SIMPLE_HYBRID_HASH) {
-                continue;
+                        JobSpecification spec = new JobSpecification();
+
+                        FileScanOperatorDescriptor csvScanner = new FileScanOperatorDescriptor(spec, splitProvider,
+                                tupleParserFactory, inDesc);
+
+                        PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, csvScanner, NC1_ID);
+
+                        LocalGroupOperatorDescriptor grouper = new LocalGroupOperatorDescriptor(spec, keyFields,
+                                decorFields, dataPartitionDesc, framesLimit, groupStateInBytes, fudgeFactor,
+                                comparatorFactories, hashFactories, null, new MultiFieldsAggregatorFactory(
+                                        new IFieldAggregateDescriptorFactory[] {
+                                                new DoubleSumFieldAggregatorFactory(1, false),
+                                                new CountFieldAggregatorFactory(false) }),
+                                new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
+                                        new DoubleSumFieldAggregatorFactory(keyFields.length, false),
+                                        new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }),
+                                new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
+                                        new DoubleSumFieldAggregatorFactory(keyFields.length, false),
+                                        new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc,
+                                grouperAlgo, 0, useBloomfilter, enableResPart, minFramesPerResidentPart,
+                                pinLastResidentPart, spillStrategy);
+
+                        PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper, NC1_ID);
+
+                        IConnectorDescriptor conn0 = new OneToOneConnectorDescriptor(spec);
+
+                        spec.connect(conn0, csvScanner, 0, grouper, 0);
+
+                        AbstractSingleActivityOperatorDescriptor printer = getPrinter(
+                                spec,
+                                "reducer_" + grouperAlgo.name() + (pinLastResidentPart ? "_pl" : "")
+                                        + spillStrategy.name());
+
+                        PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, printer, NC1_ID);
+
+                        IConnectorDescriptor conn2 = new OneToOneConnectorDescriptor(spec);
+                        spec.connect(conn2, grouper, 0, printer, 0);
+
+                        spec.addRoot(printer);
+                        runTest(spec);
+
+                    }
+
+                }
             }
-
-            JobSpecification spec = new JobSpecification();
-
-            FileScanOperatorDescriptor csvScanner = new FileScanOperatorDescriptor(spec, splitProvider,
-                    tupleParserFactory, inDesc);
-
-            PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, csvScanner, NC1_ID);
-
-            LocalGroupOperatorDescriptor grouper = new LocalGroupOperatorDescriptor(spec, keyFields, decorFields,
-                    dataPartitionDesc, framesLimit, groupStateInBytes, fudgeFactor, comparatorFactories, hashFactories,
-                    null, new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
-                            new DoubleSumFieldAggregatorFactory(1, false), new CountFieldAggregatorFactory(false) }),
-                    new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
-                            new DoubleSumFieldAggregatorFactory(keyFields.length, false),
-                            new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }),
-                    new MultiFieldsAggregatorFactory(new IFieldAggregateDescriptorFactory[] {
-                            new DoubleSumFieldAggregatorFactory(keyFields.length, false),
-                            new IntSumFieldAggregatorFactory(keyFields.length + 1, false) }), outDesc, grouperAlgo, 0,
-                    useBloomfilter, enableResidentPart, minFramesPerResidentPart);
-
-            PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, grouper, NC1_ID);
-
-            IConnectorDescriptor conn0 = new OneToOneConnectorDescriptor(spec);
-
-            spec.connect(conn0, csvScanner, 0, grouper, 0);
-
-            AbstractSingleActivityOperatorDescriptor printer = getPrinter(spec, "reducer_" + grouperAlgo.name()
-                    + "_nokey");
-
-            PartitionConstraintHelper.addAbsoluteLocationConstraint(spec, printer, NC1_ID);
-
-            IConnectorDescriptor conn2 = new OneToOneConnectorDescriptor(spec);
-            spec.connect(conn2, grouper, 0, printer, 0);
-
-            spec.addRoot(printer);
-            runTest(spec);
-        }
     }
 }
