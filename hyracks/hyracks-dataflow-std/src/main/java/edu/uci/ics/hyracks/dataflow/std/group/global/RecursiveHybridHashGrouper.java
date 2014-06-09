@@ -305,8 +305,10 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         // try to estimate the collapsing ratio, assuming that the number of raw records in the given
         // run partition is known
         long recordsLeft = 0;
-        for (long gr : groupsInRuns) {
-            recordsLeft += gr;
+        if (groupsInRuns != null) {
+            for (long gr : groupsInRuns) {
+                recordsLeft += gr;
+            }
         }
         double recordsAbsorbedExpected = framesLimit / fudgeFactor * frameSize / groupStateSizeInBytes;
         double recGroupRatio = (this.inputRecordCount - recordsLeft) / recordsAbsorbedExpected;
