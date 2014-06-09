@@ -472,6 +472,20 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             List<Long> rawRecordsInSpillingPartitions = hybridHashGrouper.getOutputRunSizeInRows();
             List<RunFileReader> runsFromHybridHash = hybridHashGrouper.getOutputRunReaders();
 
+            // try to estimate the collapsing ratio, assuming that the number of raw records in the given
+            // run partition is known
+            long recordsLeft = 0;
+            if (rawRecordsInSpillingPartitions != null) {
+                for (long gr : rawRecordsInSpillingPartitions) {
+                    recordsLeft += gr;
+                }
+            }
+            double recordsAbsorbedExpected = framesLimit / fudgeFactor * frameSize / groupStateSizeInBytes;
+            double recGroupRatio = (this.inputRecordCount - recordsLeft) / recordsAbsorbedExpected;
+            if (recGroupRatio < 1) {
+                recGroupRatio = 1;
+            }
+
             hybridHashGrouper.close();
 
             while (runsFromHybridHash.size() > 0) {
@@ -506,8 +520,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
                 long rawRecordsInRun = rawRecordsInSpillingPartitions.remove(0);
                 int recursivePartition = computeHybridHashSpilledPartitions(framesLimit, frameSize,
-                        (int) ((double) groupsInResidentPartition / rawRecordsInResidentPartition * rawRecordsInRun),
-                        groupStateSizeInBytes, 1, fudgeFactor, (useDynamicDestaging ? 2 : 1));
+                        (int) ((double) rawRecordsInRun / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor,
+                        (useDynamicDestaging ? 2 : 1));
                 runs.add(runReaderFromHybridHash);
                 runLevels.add(runLevel + 1);
                 runPartitions.add(recursivePartition);
