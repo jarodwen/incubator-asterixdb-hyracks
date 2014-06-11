@@ -18,7 +18,6 @@ import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.List;
 
-import edu.uci.ics.hyracks.api.comm.IFrameWriter;
 import edu.uci.ics.hyracks.api.context.IHyracksTaskContext;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFactory;
 import edu.uci.ics.hyracks.api.dataflow.value.IBinaryHashFunctionFamily;
@@ -33,6 +32,7 @@ import edu.uci.ics.hyracks.dataflow.common.io.RunFileReader;
 import edu.uci.ics.hyracks.dataflow.common.io.RunFileWriter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.HashFunctionFamilyFactoryAdapter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.base.IFrameWriterRunGenerator;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection;
 
 public class GracePartitioner implements IFrameWriterRunGenerator {
 
@@ -62,6 +62,10 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
 
     private ITuplePartitionComputer tuplePartitionComputer;
 
+    private final OperatorDebugCounterCollection debugCounters;
+
+    private long profileCPU, profileIOInNetwork, profileIOInDisk, profileIOOutDisk, profileIOOutNetwork;
+
     public GracePartitioner(
             IHyracksTaskContext ctx,
             int framesLimit,
@@ -79,6 +83,9 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
         this.hashFunctionFamilies = hashFunctionFamilyFactories;
         this.keys = keys;
         this.hashBaseSeed = hashBaseSeed;
+
+        this.debugCounters = new OperatorDebugCounterCollection("costmodel.operator." + this.getClass().getSimpleName()
+                + "." + String.valueOf(Thread.currentThread().getId()));
     }
 
     /*
@@ -128,6 +135,7 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
                             ctx.createManagedWorkspaceFile(GracePartitioner.class.getSimpleName()), ctx.getIOManager());
                     runsForBufs[partitionIndex].open();
                 }
+                profileIOOutDisk++;
                 FrameUtils.flushFrame(bufs[partitionIndex], runsForBufs[partitionIndex]);
 
                 this.outputFrameAppender.reset(bufs[partitionIndex], true);
@@ -158,6 +166,7 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
                             .getSimpleName()), ctx.getIOManager());
                     runsForBufs[i].open();
                 }
+                profileIOOutDisk++;
                 FrameUtils.flushFrame(bufs[i], runsForBufs[i]);
                 outputFrameAppender.reset(bufs[i], true);
             }
@@ -187,6 +196,25 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
             partitionsPerRun /= framesLimit;
             recursionLevel++;
         }
+
+        ctx.getCounterContext().getCounter("profile.cpu." + this.debugCounters.getDebugID(), true).update(profileCPU);
+        ctx.getCounterContext().getCounter("profile.io.in.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInDisk);
+        ctx.getCounterContext().getCounter("profile.io.in.network." + this.debugCounters.getDebugID(), true)
+                .update(profileIOInNetwork);
+        ctx.getCounterContext().getCounter("profile.io.out.disk." + this.debugCounters.getDebugID(), true)
+                .update(profileIOOutDisk);
+        ctx.getCounterContext().getCounter("profile.io.out.network." + this.debugCounters.getDebugID(), true)
+                .update(profileIOOutNetwork);
+
+        profileCPU = 0;
+        profileIOInDisk = 0;
+        profileIOInNetwork = 0;
+        profileIOOutDisk = 0;
+        profileIOOutNetwork = 0;
+
+        this.debugCounters.dumpCounters(ctx.getCounterContext());
+        this.debugCounters.reset();
     }
 
     private void recursivePartition(
@@ -214,6 +242,7 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
                                 ctx.getIOManager());
                         runsForBufs[partitionIndex].open();
                     }
+                    profileIOOutDisk++;
                     FrameUtils.flushFrame(bufs[partitionIndex], runsForBufs[partitionIndex]);
                     outputFrameAppender.reset(bufs[partitionIndex], true);
                     if (!outputFrameAppender.append(inputFrameTupleAccessor, i)) {
@@ -235,6 +264,7 @@ public class GracePartitioner implements IFrameWriterRunGenerator {
                             .getSimpleName()), ctx.getIOManager());
                     runsForBufs[i].open();
                 }
+                profileIOOutDisk++;
                 FrameUtils.flushFrame(bufs[i], runsForBufs[i]);
                 outputFrameAppender.reset(bufs[i], true);
             }

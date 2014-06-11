@@ -33,6 +33,7 @@ import edu.uci.ics.hyracks.dataflow.std.base.AbstractSingleActivityOperatorDescr
 import edu.uci.ics.hyracks.dataflow.std.base.AbstractUnaryInputUnaryOutputOperatorNodePushable;
 import edu.uci.ics.hyracks.dataflow.std.group.IAggregatorDescriptorFactory;
 import edu.uci.ics.hyracks.dataflow.std.group.global.DynamicHybridHashGrouper.PartSpillStrategy;
+import edu.uci.ics.hyracks.dataflow.std.group.global.base.OperatorDebugCounterCollection;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashFunctionFamilyFactoryAdapter;
 import edu.uci.ics.hyracks.dataflow.std.group.global.data.IDataPartitionDescriptor;
 
@@ -320,6 +321,32 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
             IRecordDescriptorProvider recordDescProvider,
             final int partition,
             int nPartitions) throws HyracksDataException {
+
+        /**
+         * counters for input parameters
+         */
+        OperatorDebugCounterCollection debugCounters = new OperatorDebugCounterCollection("costmodel.operator."
+                + this.getClass().getSimpleName() + "." + System.currentTimeMillis() + "."
+                + String.valueOf(Thread.currentThread().getId()));
+
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".framelimits", true)
+                .update(this.framesLimit);
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".algo", true)
+                .update(this.algorithm.ordinal());
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".groupstatesize", true)
+                .update(this.groupStateSizeInBytes);
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".fudgefactor", true)
+                .update((long) (this.fudgeFactor * 100));
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".bloomfilter", true)
+                .update(this.useBloomfilterForHashtable ? 1 : 0);
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".partres", true)
+                .update(this.enableResidentPart ? 1 : 0);
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".pinlastres", true)
+                .update(this.pinLastResidentPart ? 1 : 0);
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".spillstrategy", true)
+                .update(this.spillStrategy.ordinal());
+        ctx.getCounterContext().getCounter("gbytestinfo." + debugCounters.getDebugID() + ".minrespart", true)
+                .update(this.minFramesPerResidentPart);
 
         final IBinaryComparator[] comparators = new IBinaryComparator[comparatorFactories.length];
         for (int i = 0; i < comparators.length; i++) {
