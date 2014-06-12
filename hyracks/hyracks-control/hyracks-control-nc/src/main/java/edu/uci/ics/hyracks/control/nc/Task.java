@@ -203,9 +203,9 @@ public class Task implements IHyracksTaskContext, ICounterContext, Runnable {
         // FIXME [jarodwen] remove the log dump info
         double dumpCPU = 0, dumpIO = 0, dumpTime = 0, dumpRecs = 0;
         for (Counter c : counterMap.values()) {
-            if (c.getName().contains("required.cpu")) {
+            if (c.getName().contains("profile.cpu")) {
                 dumpCPU += c.get();
-            } else if (c.getName().contains("required.io.out")) {
+            } else if (c.getName().contains("profile.io.out")) {
                 dumpIO += c.get();
             } else if (c.getName().contains("optional.elapsedTime")) {
                 dumpTime += c.get();
