@@ -168,7 +168,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         gracePartitions = computeGracePartitions(framesLimit, frameSize, outputGroupCount, groupStateSizeInBytes,
                 fudgeFactor, (useDynamicDestaging ? 2 : 1), useDynamicDestaging);
         hybridHashSpilledPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize, outputGroupCount,
-                groupStateSizeInBytes, gracePartitions, fudgeFactor, (useDynamicDestaging ? 2 : 1), useDynamicDestaging);
+                groupStateSizeInBytes, gracePartitions, fudgeFactor, 2, useDynamicDestaging);
         hybridHashResidentPartitions = computeHybridHashResidentPartitions(framesLimit, hybridHashSpilledPartitions,
                 minFramesPerResPart);
         maxRecursionLevel = getMaxLevelsIfUsingSortGrouper(framesLimit, inputRecordCount, groupStateSizeInBytes);
@@ -327,8 +327,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             } else {
 
                 int newPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize,
-                        (long) (groupsInRuns.get(i) / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor,
-                        (useDynamicDestaging ? 2 : 1), useDynamicDestaging);
+                        (long) (groupsInRuns.get(i) / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor, 2,
+                        useDynamicDestaging);
                 runPartitions.add(newPartitions);
             }
         }
