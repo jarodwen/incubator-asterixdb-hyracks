@@ -166,9 +166,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         hashLevelSeedVariable++;
 
         gracePartitions = computeGracePartitions(framesLimit, frameSize, outputGroupCount, groupStateSizeInBytes,
-                fudgeFactor, (useDynamicDestaging ? 2 : 1), useDynamicDestaging);
+                fudgeFactor, 2, useDynamicDestaging, minFramesPerResPart);
         hybridHashSpilledPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize, outputGroupCount,
-                groupStateSizeInBytes, gracePartitions, fudgeFactor, 2, useDynamicDestaging);
+                groupStateSizeInBytes, gracePartitions, fudgeFactor, 2, useDynamicDestaging, minFramesPerResPart);
         hybridHashResidentPartitions = computeHybridHashResidentPartitions(framesLimit, hybridHashSpilledPartitions,
                 minFramesPerResPart);
         maxRecursionLevel = getMaxLevelsIfUsingSortGrouper(framesLimit, inputRecordCount, groupStateSizeInBytes);
@@ -223,11 +223,12 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             int groupStateSizeInBytes,
             double fudgeFactor,
             int minPartitions,
-            boolean useDynamicDestaging) throws HyracksDataException {
+            boolean useDynamicDestaging,
+            int minFramesPerPart) throws HyracksDataException {
         int minGracePartitions = 1;
 
         while (computeHybridHashSpilledPartitions(framesLimit, frameSize, outputGroupCount, groupStateSizeInBytes,
-                minGracePartitions, fudgeFactor, minPartitions, useDynamicDestaging) * fudgeFactor > framesLimit - 1) {
+                minGracePartitions, fudgeFactor, minPartitions, useDynamicDestaging, minFramesPerPart) * fudgeFactor > framesLimit - 1) {
             minGracePartitions *= framesLimit;
         }
 
@@ -242,11 +243,17 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
             int gracePartitions,
             double fudgeFactor,
             int minPartitions,
-            boolean useDynamicDestaging) throws HyracksDataException {
+            boolean useDynamicDestaging,
+            int minFramesPerPart) throws HyracksDataException {
         double partitionGroupSizeInFrames = (double) outputGroupCount / gracePartitions * groupStateSizeInBytes
                 / frameSize;
         int parts = (int) Math.max(minPartitions,
                 Math.ceil((partitionGroupSizeInFrames * fudgeFactor - framesLimit) / (framesLimit - 2)));
+
+        // guarding code
+        if (parts >= framesLimit || parts <= 0) {
+            parts = framesLimit / minFramesPerPart;
+        }
 
         return parts + (useDynamicDestaging ? 1 : 0);
     }
@@ -328,7 +335,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
                 int newPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize,
                         (long) (groupsInRuns.get(i) / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor, 2,
-                        useDynamicDestaging);
+                        useDynamicDestaging, minFramesPerResPart);
                 runPartitions.add(newPartitions);
             }
         }
@@ -522,8 +529,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
 
                 long rawRecordsInRun = rawRecordsInSpillingPartitions.remove(0);
                 int recursivePartition = computeHybridHashSpilledPartitions(framesLimit, frameSize,
-                        (int) ((double) rawRecordsInRun / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor,
-                        (useDynamicDestaging ? 2 : 1), useDynamicDestaging);
+                        (int) ((double) rawRecordsInRun / recGroupRatio), groupStateSizeInBytes, 1, fudgeFactor, 2,
+                        useDynamicDestaging, minFramesPerResPart);
                 runs.add(runReaderFromHybridHash);
                 runLevels.add(runLevel + 1);
                 runPartitions.add(recursivePartition);
