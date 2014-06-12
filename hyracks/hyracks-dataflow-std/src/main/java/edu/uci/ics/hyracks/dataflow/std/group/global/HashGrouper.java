@@ -247,7 +247,7 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
                         // hash table is full: need to flush (to either next operator or a run file)
 
                         debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio,
-                                debugTempGroupsInHashtable / debugTempUsedSlots);
+                                (debugTempUsedSlots <= 0 ? 0 : debugTempGroupsInHashtable / debugTempUsedSlots));
                         debugTempGroupsInHashtable = 0;
                         debugTempUsedSlots = 0;
 
@@ -691,7 +691,7 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         isAllInputProcessed = true;
         if (groupsInHashtable > 0) {
             debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio,
-                    debugTempGroupsInHashtable / debugTempUsedSlots);
+                    (debugTempUsedSlots <= 0 ? 0 : debugTempGroupsInHashtable / debugTempUsedSlots));
             debugTempGroupsInHashtable = 0;
             debugTempUsedSlots = 0;
 
@@ -753,8 +753,8 @@ public class HashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugCounters.updateOptionalCustomizedCounter(".hash.groupsInTable", debugTempGroupsInHashtable);
         this.debugCounters.updateOptionalCustomizedCounter(".hash.slotsUsed", debugTempUsedSlots);
 
-        debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio,
-                (double) debugTempGroupsInHashtable / debugTempUsedSlots);
+        debugOptionalMaxHashtableFillRatio = Math.max(debugOptionalMaxHashtableFillRatio, (debugTempUsedSlots <= 0 ? 0
+                : (double) debugTempGroupsInHashtable / debugTempUsedSlots));
 
         this.debugCounters.updateOptionalCustomizedCounter(".hash.maxFillRatio",
                 ((long) (debugOptionalMaxHashtableFillRatio * 100)));
