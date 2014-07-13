@@ -170,7 +170,7 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
         hybridHashSpilledPartitions = computeHybridHashSpilledPartitions(framesLimit, frameSize, outputGroupCount,
                 groupStateSizeInBytes, gracePartitions, fudgeFactor, 2, useDynamicDestaging, minFramesPerResPart);
         hybridHashResidentPartitions = computeHybridHashResidentPartitions(framesLimit, hybridHashSpilledPartitions,
-                minFramesPerResPart);
+                minFramesPerResPart, fudgeFactor);
         maxRecursionLevel = getMaxLevelsIfUsingSortGrouper(framesLimit, inputRecordCount, groupStateSizeInBytes);
 
         this.debugCounters.updateOptionalCustomizedCounter(".partition.hybrid.0.keys", outputGroupCount
@@ -261,8 +261,9 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
     public static int computeHybridHashResidentPartitions(
             int framesLimit,
             int hybridHashSpilledPartitions,
-            int minFramesPerPart) {
-        return Math.max(1, (framesLimit - 1 - hybridHashSpilledPartitions) / minFramesPerPart);
+            int minFramesPerPart,
+            double fudgeFactor) {
+        return (int) Math.max(1, (framesLimit - 1 - hybridHashSpilledPartitions) / (fudgeFactor * minFramesPerPart));
     }
 
     /**
@@ -432,7 +433,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                             firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                             partialMergerFactory, inRecordDesc, outRecordDesc, true, outputWriter, true, newTableSize,
                             runPartition, computeHybridHashResidentPartitions(framesLimit, runPartition,
-                                    minFramesPerResPart), this.useBloomfilter, enableResidentPart, partSpillStrategy);
+                                    minFramesPerResPart, fudgeFactor), this.useBloomfilter, enableResidentPart,
+                            partSpillStrategy);
                 }
                 originalRunsCount--;
             } else {
@@ -447,8 +449,8 @@ public class RecursiveHybridHashGrouper implements IFrameWriter {
                             framesLimit, firstKeyNormalizerFactory, comparatorFactories, hashFunctionFactories,
                             partialMergerFactory, finalMergerFactory, outRecordDesc, outRecordDesc, true, outputWriter,
                             true, newTableSize, runPartition, computeHybridHashResidentPartitions(framesLimit,
-                                    runPartition, minFramesPerResPart), useBloomfilter, enableResidentPart,
-                            partSpillStrategy);
+                                    runPartition, minFramesPerResPart, fudgeFactor), useBloomfilter,
+                            enableResidentPart, partSpillStrategy);
                 }
             }
 

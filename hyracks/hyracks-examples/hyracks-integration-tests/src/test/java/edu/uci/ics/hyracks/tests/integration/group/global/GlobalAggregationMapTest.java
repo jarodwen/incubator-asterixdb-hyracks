@@ -78,7 +78,7 @@ public class GlobalAggregationMapTest extends AbstractIntegrationTest {
 
     private final boolean pinLastResPart = true;
 
-    private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.MIN_ABSORB_FIRST;
+    private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.LOWER_ABSORB_THAN_AVG;
 
     private final int inputDataOption = 0;
 

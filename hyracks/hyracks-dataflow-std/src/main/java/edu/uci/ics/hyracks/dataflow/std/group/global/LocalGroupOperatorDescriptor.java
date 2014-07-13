@@ -411,8 +411,8 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
                                 firstNormalizerFactory, comparatorFactories, hashFunctionFactories, aggregatorFactory,
                                 finalMergerFactory, inRecDesc, outRecDesc, false, writer, false, tableSize, 1,
                                 RecursiveHybridHashGrouper.computeHybridHashResidentPartitions(framesLimit, 1,
-                                        minFramesPerResidentPart), useBloomfilterForHashtable, enableResidentPart,
-                                spillStrategy);
+                                        minFramesPerResidentPart, fudgeFactor), useBloomfilterForHashtable,
+                                enableResidentPart, spillStrategy);
                         break;
                     case RECURSIVE_HYBRID_HASH:
                         tableSize = computeHashtableSlots(framesLimit - 1, frameSize, groupStateSizeInBytes,

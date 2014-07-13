@@ -90,8 +90,25 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     private final int spilledPartitions;
     private final int residentPartitions;
 
+    /**
+     * Counters for records and groups in resident and spilled partitions. The following
+     * assertions should always be satisfied:
+     * - Total inserted records = sum(recordsInResidentParts) + sum(recordsInSpilledParts)
+     * - Total groups <= sum(groupsInResidentParts) + sum(groupsInSpilledParts)
+     * After a resident partition is spilled, all its resident counters are moved to the
+     * spilled counters. After it is spilled, all inserted records into this partition are
+     * counted as a unique group (which is the reason for >= above.)
+     */
     private final long[] recordsInResidentParts, groupsInResidentParts;
     private final long[] recordsInSpilledParts, groupsInSpilledParts;
+
+    /**
+     * The total number of records and groups in memory and inserted. The counters in memory
+     * could provide an upper bound of the absorption ratio, while the counters in total is
+     * a lower bound of the absorption ratio.
+     */
+    private long thresholdTotalRecordsInMem, thresholdTotalGroupsInMem;
+    private long thresholdTotalRecordsInserted, thresholdTotalGroupsInserted;
 
     /**
      * The counters of buffers for each resident partition
@@ -123,9 +140,6 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     private byte bloomFilterByte;
 
     private boolean isHashTableFull;
-
-    // counter for the number of tuples that have been processed
-    private int processedTuple;
 
     private List<Long> recordsInRuns, groupsInRuns;
 
@@ -327,9 +341,6 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.FRAME_INPUT, 1);
 
-        // reset the processed tuple count
-        this.processedTuple = 0;
-
         inputFrameTupleAccessor.reset(buffer);
 
         int tupleCount = inputFrameTupleAccessor.getTupleCount();
@@ -337,6 +348,10 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         this.debugCounters.updateOptionalCommonCounter(OptionalCommonCounters.RECORD_INPUT, tupleCount);
 
         for (int tupleIndex = 0; tupleIndex < tupleCount; tupleIndex++) {
+
+            // insert a new input record
+            this.thresholdTotalRecordsInserted++;
+
             int rawHashValue = rawTuplePartitionComputer
                     .partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
             int h = rawHashValue % tableSize;
@@ -357,6 +372,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 aggregator.init(groupTupleBuilder, inputFrameTupleAccessor, tupleIndex, aggState);
 
                 spillGroup(groupTupleBuilder, h);
+
+                // add one to the total groups inserted, assuming that each spilled record
+                // is a unique group
+                this.thresholdTotalGroupsInserted++;
+
             } else {
                 if (findMatch(inputFrameTupleAccessor, tupleIndex, rawHashValue, h)) {
                     // match found: do aggregation
@@ -367,6 +387,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                             .getBuffer().array(), tupleStartOffset, tupleEndOffset - tupleStartOffset, aggState);
 
                     this.recordsInResidentParts[residentPartID]++;
+
+                    this.thresholdTotalRecordsInMem++;
+
                 } else {
                     // not found: if the hash table is not full, insert into the hash table
 
@@ -407,6 +430,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                         while (newFrameID < 0) {
                             int partIDToSpill = pickPartitionToSpill();
                             if (partIDToSpill >= 0) {
+                                LOGGER.warning("[HybridHashGrouper] spill partition " + partIDToSpill);
                                 flushResidentPart(GrouperFlushOption.FLUSH_FOR_GROUP_STATE, partIDToSpill);
                             } else {
                                 // no more space to recycle
@@ -447,12 +471,26 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                     this.groupsInResidentParts[residentPartID]++;
 
                     debugTempGroupsInHashtable++;
+
+                    this.thresholdTotalRecordsInMem++;
+                    this.thresholdTotalGroupsInMem++;
+                    this.thresholdTotalGroupsInserted++;
                 }
             }
 
             insertIntoHistogram(h);
-            this.processedTuple++;
         }
+    }
+
+    /**
+     * Compute the estimated absorption ratio, as the average between the upper bound (groups/records in memory) and
+     * the lower bound (groups/records totally).
+     * 
+     * @return
+     */
+    private double getEstimatedAbsorptionRatio() {
+        return 1 - (((double) thresholdTotalGroupsInMem) / ((double) thresholdTotalRecordsInMem) + ((double) thresholdTotalGroupsInserted)
+                / ((double) thresholdTotalRecordsInserted)) / 2;
     }
 
     /**
@@ -464,6 +502,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         int partIDToSpill = -1;
         boolean pickMin = true;
         int partsInMem = 0;
+
+        double estimatedAbsorptionRatio = getEstimatedAbsorptionRatio();
 
         switch (this.partSpillStrategy) {
             case MAX_FIRST:
@@ -483,6 +523,20 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                     }
                 }
                 break;
+            case LOWER_ABSORB_THAN_AVG:
+                for (int i = 0; i < this.residentPartitions; i++) {
+                    if (this.residentPartsSpillFlag[i]) {
+                        continue;
+                    }
+                    partsInMem++;
+                    double currentAbsorptionRatio = 1 - ((this.groupsInResidentParts[i] == 0) ? 1
+                            : this.recordsInResidentParts[i] / this.groupsInResidentParts[i]);
+                    if (currentAbsorptionRatio > 0 && currentAbsorptionRatio < estimatedAbsorptionRatio) {
+                        partIDToSpill = i;
+                        break;
+                    }
+                }
+                break;
             case MIN_ABSORB_FIRST:
             default:
                 double minAbsorptionRatio = Integer.MAX_VALUE;
@@ -499,6 +553,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                         partIDToSpill = i;
                     }
                 }
+
         }
 
         if (partsInMem == 1) {
@@ -902,6 +957,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         // flush the resident partitions
         for (int i = 0; i < this.residentPartitions; i++) {
             if (!this.residentPartsSpillFlag[i]) {
+                LOGGER.warning("[HybridHashGrouper] flush resident partition " + i);
                 flushResidentPart(GrouperFlushOption.FLUSH_FOR_RESULT_STATE, i);
             }
         }
@@ -986,10 +1042,6 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         this.headers = null;
         this.spilledPartitionBuffers = null;
-    }
-
-    public int getProcessedTupleCount() {
-        return this.processedTuple;
     }
 
     protected enum HybridHashFlushOption implements IGrouperFlushOption {

@@ -233,7 +233,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     public enum PartSpillStrategy {
         MIN_FIRST,
         MAX_FIRST,
-        MIN_ABSORB_FIRST
+        MIN_ABSORB_FIRST,
+        LOWER_ABSORB_THAN_AVG
     }
 
     private final PartSpillStrategy spillStrategy;
