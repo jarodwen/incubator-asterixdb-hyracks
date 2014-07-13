@@ -268,6 +268,9 @@ public class GlobalGroupBenchmarkingClient {
             case 1:
                 partSpillStrategy = PartSpillStrategy.MAX_FIRST;
                 break;
+            case 2:
+                partSpillStrategy = PartSpillStrategy.LOWER_ABSORB_THAN_AVG;
+                break;
             default:
                 partSpillStrategy = PartSpillStrategy.MIN_ABSORB_FIRST;
 
