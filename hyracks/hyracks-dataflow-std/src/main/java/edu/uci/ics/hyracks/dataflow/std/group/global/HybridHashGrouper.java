@@ -556,9 +556,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         }
 
-        if (partsInMem == 1) {
-            // Only one partition is left: pin this partition, and use the hash table output buffer for it
-            partIDToSpill = -1;
+        if (partIDToSpill == -1) {
             // which also means that the hash table is full now
             this.isHashTableFull = true;
         }
