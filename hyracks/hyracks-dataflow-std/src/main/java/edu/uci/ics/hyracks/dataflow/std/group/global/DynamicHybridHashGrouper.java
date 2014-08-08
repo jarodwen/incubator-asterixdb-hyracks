@@ -125,10 +125,6 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
     private final boolean[] partitionSpillingFlags;
 
     /**
-     * Whether the partitions with high absorption ratio should be pinned. Right now we assume that they are not pinned.
-     */
-    private final boolean pinHighAbsorptionPartitions = false;
-    /**
      * The flag on whether the last in-memory partition should be pinned, even
      * its absorption has fallen below the average absorption ratio.
      */
@@ -155,6 +151,15 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
      * ratio to spill.
      */
     private long[] recordsInParts, groupsInParts;
+
+    /**
+     * The total number of records and groups in memory and inserted. The counters in memory
+     * could provide an upper bound of the absorption ratio, while the counters in total is
+     * a lower bound of the absorption ratio. In details,
+     * - thresholdTotalRecordsInMem
+     */
+    private long thresholdTotalRecordsInMem, thresholdTotalGroupsInMem;
+    private long thresholdTotalRecordsInserted, thresholdTotalGroupsInserted;
 
     /**
      * Whether to use mini-bloomfilter to enhance the hashtable lookup
@@ -421,6 +426,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                     .partition(inputFrameTupleAccessor, tupleIndex, MAX_RAW_HASHKEY);
             int htSlotID = rawHashValue % this.tableSize;
 
+            this.thresholdTotalRecordsInserted++;
+
             /**
              * Need to partition data based on their hash table slot id, so that different groups having
              * the same hash table slot id will in the same partition.
@@ -451,6 +458,8 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 spillGroup(groupTupleBuilder, spillPartID);
                 this.recordsInParts[spillPartID]++;
                 this.groupsInParts[spillPartID]++;
+                this.thresholdTotalGroupsInserted++;
+
             } else {
                 // The partition is not spilled: try to find a match first
                 if (findMatch(inputFrameTupleAccessor, tupleIndex, rawHashValue, htSlotID)) {
@@ -462,9 +471,14 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                             frameManager.getFrame(htLookupFrameIndex).array(), tupleStartOffset, tupleEndOffset
                                     - tupleStartOffset, aggState);
                     this.recordsInParts[partID]++;
+                    this.thresholdTotalRecordsInMem++;
                 } else {
                     // haven't found a match: either spill (for pinned part) or
                     // add a new entry (for unpinned part)
+
+                    // Always inserted into a new group
+                    this.thresholdTotalGroupsInserted++;
+
                     this.groupTupleBuilder.reset();
 
                     for (int i : keyFields) {
@@ -541,6 +555,10 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
 
                             this.recordsInParts[partID]++;
                             this.groupsInParts[partID]++;
+
+                            this.thresholdTotalGroupsInMem++;
+                            this.thresholdTotalRecordsInMem++;
+
                         }
 
                     }
@@ -661,10 +679,25 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         }
     }
 
+    /**
+     * Compute the estimated absorption ratio, as the average between the upper bound (groups/records in memory) and
+     * the lower bound (groups/records totally).
+     * 
+     * @return
+     */
+    private double getEstimatedAbsorptionRatio() {
+        assert (thresholdTotalGroupsInMem <= thresholdTotalRecordsInMem);
+        assert (thresholdTotalGroupsInserted <= thresholdTotalRecordsInserted);
+        return 1 - (((double) thresholdTotalGroupsInMem) / ((double) thresholdTotalRecordsInMem) + ((double) thresholdTotalGroupsInserted)
+                / ((double) thresholdTotalRecordsInserted)) / 2;
+    }
+
     private int pickPartitionToSpill() {
         int partIDToSpill = -1;
         boolean pickMin = true;
         int partsInMem = 0;
+
+        double estimatedAbsorptionRatio = getEstimatedAbsorptionRatio();
 
         switch (this.spillStrategy) {
             case MAX_FIRST:
@@ -681,6 +714,20 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                             : (this.partitionBufferCounters[i] >= partBufCount)) {
                         partIDToSpill = i;
                         partBufCount = this.partitionBufferCounters[i];
+                    }
+                }
+                break;
+            case LOWER_ABSORB_THAN_AVG:
+                for (int i = 0; i < this.numParts; i++) {
+                    if (this.partitionSpillingFlags[i]) {
+                        continue;
+                    }
+                    partsInMem++;
+                    double currentAbsorptionRatio = 1 - ((this.groupsInParts[i] == 0) ? 1 : this.recordsInParts[i]
+                            / this.groupsInParts[i]);
+                    if (currentAbsorptionRatio > 0 && currentAbsorptionRatio < estimatedAbsorptionRatio) {
+                        partIDToSpill = i;
+                        break;
                     }
                 }
                 break;
@@ -702,7 +749,7 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                 }
         }
         // Only one partition is left: pin this partition if required, and use the hash table output buffer for it
-        if (partsInMem == 1 && this.pinLastPartitionAlways) {
+        if (partIDToSpill == -1 || (partIDToSpill >= 0 && partsInMem == 1 && this.pinLastPartitionAlways)) {
             this.partitionPinFlags[partIDToSpill] = true;
             this.isHashtableFull = true;
             partIDToSpill = -1;
@@ -900,6 +947,13 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
             if (!this.partitionPinFlags[partitionIndex]) {
                 this.unpinnedSpilledParts.add(partitionIndex);
             }
+
+            // adjust the in-memory group/record statistics
+            thresholdTotalGroupsInMem -= this.groupsInParts[partitionIndex];
+            thresholdTotalRecordsInMem -= this.recordsInParts[partitionIndex];
+
+            assert thresholdTotalGroupsInMem >= 0;
+            assert thresholdTotalRecordsInMem >= 0;
         }
     }
 

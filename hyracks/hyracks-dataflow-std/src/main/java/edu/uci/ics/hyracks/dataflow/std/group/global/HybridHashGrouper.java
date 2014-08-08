@@ -57,16 +57,34 @@ import edu.uci.ics.hyracks.dataflow.std.group.global.data.HashTableFrameTupleApp
  */
 public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
+    /**
+     * # Bytes used for the frame reference (by frame id) in hash table.
+     */
     protected static final int HT_FRAME_REF_SIZE = 4;
-    protected static final int HT_TUPLE_REF_SIZE = 4;
-    protected static final int POINTER_INIT_SIZE = 8;
-    protected static final int POINTER_LENGTH = 3;
 
+    /**
+     * # Bytes used for the tuple reference (by tuple index) in hash table
+     */
+    protected static final int HT_TUPLE_REF_SIZE = 4;
+
+    /**
+     * # Bytes used for the mini-bloom-filter in hash table header
+     */
     protected static final int HT_MINI_BLOOM_FILTER_SIZE = 1;
+
+    /**
+     * # hash functions used for the mini-bloom-filter.
+     */
     protected static final int HT_BF_PRIME_FUNC_COUNT = 3;
 
+    /**
+     * The default hash key range
+     */
     protected static final int MAX_RAW_HASHKEY = Integer.MAX_VALUE;
 
+    /**
+     * Hash table slots count
+     */
     protected final int tableSize;
 
     private final IAggregatorDescriptor aggregator, merger;
@@ -77,6 +95,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     private final ITuplePartitionComputer rawTuplePartitionComputer, partialTuplePartitionComputer;
 
     protected final FrameMemManager frameManager;
+
     protected int[] headers;
     protected int[] hashtablePartitionBuffers;
     protected int[] spilledPartitionBuffers;
@@ -105,7 +124,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     /**
      * The total number of records and groups in memory and inserted. The counters in memory
      * could provide an upper bound of the absorption ratio, while the counters in total is
-     * a lower bound of the absorption ratio.
+     * a lower bound of the absorption ratio. In details,
+     * - thresholdTotalRecordsInMem
      */
     private long thresholdTotalRecordsInMem, thresholdTotalGroupsInMem;
     private long thresholdTotalRecordsInserted, thresholdTotalGroupsInserted;
@@ -391,6 +411,9 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                     this.thresholdTotalRecordsInMem++;
 
                 } else {
+
+                    this.thresholdTotalGroupsInserted++;
+
                     // not found: if the hash table is not full, insert into the hash table
 
                     this.groupTupleBuilder.reset();
@@ -408,10 +431,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                     // If the hash table is full: always spill new group
                     if (isHashTableFull) {
                         spillGroup(groupTupleBuilder, h);
+
                         continue;
                     }
 
-                    // insert the new group into the beginning of the slot
+                    // get the beginning of the slot where the group should be inserted
                     getSlotPointer(h);
 
                     if (lookupFrameIndex < 0) {
@@ -422,6 +446,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                         hashtableFrameTupleAppender.reset(
                                 this.frameManager.getFrame(this.hashtablePartitionBuffers[residentPartID]), false);
                     }
+
                     if (this.hashtablePartitionBuffers[residentPartID] < 0
                             || !hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
                                     groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(), lookupFrameIndex,
@@ -474,7 +499,6 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
                     this.thresholdTotalRecordsInMem++;
                     this.thresholdTotalGroupsInMem++;
-                    this.thresholdTotalGroupsInserted++;
                 }
             }
 
@@ -489,6 +513,8 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
      * @return
      */
     private double getEstimatedAbsorptionRatio() {
+        assert (thresholdTotalGroupsInMem <= thresholdTotalRecordsInMem);
+        assert (thresholdTotalGroupsInserted <= thresholdTotalRecordsInserted);
         return 1 - (((double) thresholdTotalGroupsInMem) / ((double) thresholdTotalRecordsInMem) + ((double) thresholdTotalGroupsInserted)
                 / ((double) thresholdTotalRecordsInserted)) / 2;
     }
@@ -556,9 +582,10 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
 
         }
 
-        if (partIDToSpill == -1) {
+        if (partIDToSpill == -1 || (partIDToSpill >= 0 && partsInMem == 1)) {
             // which also means that the hash table is full now
             this.isHashTableFull = true;
+            partIDToSpill = -1;
         }
         return partIDToSpill;
     }
@@ -943,6 +970,13 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         }
 
         this.residentPartsSpillFlag[partitionIndex] = true;
+
+        // adjust the in-memory group/record statistics
+        thresholdTotalGroupsInMem -= this.groupsInResidentParts[partitionIndex];
+        thresholdTotalRecordsInMem -= this.recordsInResidentParts[partitionIndex];
+
+        assert thresholdTotalGroupsInMem >= 0;
+        assert thresholdTotalRecordsInMem >= 0;
     }
 
     @Override
