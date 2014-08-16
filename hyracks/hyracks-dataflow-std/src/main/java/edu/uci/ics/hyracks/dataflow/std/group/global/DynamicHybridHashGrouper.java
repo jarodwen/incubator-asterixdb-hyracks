@@ -521,12 +521,19 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                                 if (!isAllocated) {
                                     // must be the last partition pinned
                                     if (this.isHashtableFull) {
-                                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(htSlotID);
-                                        spillGroup(groupTupleBuilder, unpinnedPartPicked);
-                                        this.recordsInParts[unpinnedPartPicked]++;
-                                        this.groupsInParts[unpinnedPartPicked]++;
-                                        isInsertedResidentPart = false;
-                                        break;
+                                        if (this.partitionPinFlags[partID]
+                                                && this.unpinnedSpilledParts.size() == this.numParts - 1
+                                                && !this.partitionSpillingFlags[partID]) {
+                                            int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(htSlotID);
+                                            spillGroup(groupTupleBuilder, unpinnedPartPicked);
+                                            this.recordsInParts[unpinnedPartPicked]++;
+                                            this.groupsInParts[unpinnedPartPicked]++;
+                                            isInsertedResidentPart = false;
+                                            break;
+                                        } else {
+                                            throw new HyracksDataException(
+                                                    "Should not reach: no available memory for insertion, and the partition is not spilled.");
+                                        }
                                     }
                                 } else {
                                     hashtableFrameTupleAppender.reset(
@@ -723,7 +730,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                         break;
                     }
                 }
-                break;
+                if (!(partsInMem > 1 && partIDToSpill < 0)) {
+                    break;
+                }
             case MIN_ABSORB_FIRST:
             default:
                 double minAbsorptionRatio = Integer.MAX_VALUE;
