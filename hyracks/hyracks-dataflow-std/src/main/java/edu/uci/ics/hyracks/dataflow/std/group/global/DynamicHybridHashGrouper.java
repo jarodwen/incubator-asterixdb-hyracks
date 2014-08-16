@@ -521,19 +521,12 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
                                 if (!isAllocated) {
                                     // must be the last partition pinned
                                     if (this.isHashtableFull) {
-                                        if (this.partitionPinFlags[partID]
-                                                && this.unpinnedSpilledParts.size() == this.numParts - 1
-                                                && !this.partitionSpillingFlags[partID]) {
-                                            int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(htSlotID);
-                                            spillGroup(groupTupleBuilder, unpinnedPartPicked);
-                                            this.recordsInParts[unpinnedPartPicked]++;
-                                            this.groupsInParts[unpinnedPartPicked]++;
-                                            isInsertedResidentPart = false;
-                                            break;
-                                        } else {
-                                            throw new HyracksDataException(
-                                                    "Should not reach: no available memory for insertion, and the partition is not spilled.");
-                                        }
+                                        int unpinnedPartPicked = getUnpinnedSpilledPartIDForSpilling(htSlotID);
+                                        spillGroup(groupTupleBuilder, unpinnedPartPicked);
+                                        this.recordsInParts[unpinnedPartPicked]++;
+                                        this.groupsInParts[unpinnedPartPicked]++;
+                                        isInsertedResidentPart = false;
+                                        break;
                                     }
                                 } else {
                                     hashtableFrameTupleAppender.reset(
