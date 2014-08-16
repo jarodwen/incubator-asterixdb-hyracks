@@ -750,7 +750,9 @@ public class DynamicHybridHashGrouper extends AbstractHistogramPushBasedGrouper 
         }
         // Only one partition is left: pin this partition if required, and use the hash table output buffer for it
         if (partIDToSpill == -1 || (partIDToSpill >= 0 && partsInMem == 1 && this.pinLastPartitionAlways)) {
-            this.partitionPinFlags[partIDToSpill] = true;
+            if (partIDToSpill >= 0) {
+                this.partitionPinFlags[partIDToSpill] = true;
+            }
             this.isHashtableFull = true;
             partIDToSpill = -1;
         }
