@@ -264,31 +264,36 @@ public class LocalGroupOperatorDescriptor extends AbstractSingleActivityOperator
         headerPages = Math.min(headerPages, framesLimit - expectedMaxOutputBuffer - 2);
 
         int slots = headerPages * headerRefPerFrame;
-
-        int numsToCheck = (int) Math.min(slots * 0.01, 1000);
-        BitSet candidates = new BitSet();
-        candidates.set(0, numsToCheck);
-        for (int i = (slots % 2 == 0) ? 0 : 1; i < numsToCheck; i = i + 2) {
-            candidates.set(i, false);
-        }
-        int slotsForOneFrame = frameSize / (headerRefSize);
-        for (int i = 3; i < slotsForOneFrame; i = i + 2) {
-            int nextBit = candidates.nextSetBit(0);
-            while (nextBit >= 0) {
-                if ((slots + nextBit) % i == 0) {
-                    candidates.set(nextBit, false);
-                    if (candidates.cardinality() == 1) {
-                        break;
-                    }
-                }
-                nextBit = candidates.nextSetBit(nextBit + 1);
-            }
-            if (candidates.cardinality() == 1) {
-                break;
-            }
+        
+        if(slots %2 == 0){
+            slots--;
         }
 
-        return slots + candidates.nextSetBit(0);
+        // int numsToCheck = (int) Math.min(slots * 0.01, 1000);
+        // BitSet candidates = new BitSet();
+        // candidates.set(0, numsToCheck);
+        // for (int i = (slots % 2 == 0) ? 0 : 1; i < numsToCheck; i = i + 2) {
+        // candidates.set(i, false);
+        // }
+        // int slotsForOneFrame = frameSize / (headerRefSize);
+        // for (int i = 3; i < slotsForOneFrame; i = i + 2) {
+        // int nextBit = candidates.nextSetBit(0);
+        // while (nextBit >= 0) {
+        // if ((slots + nextBit) % i == 0) {
+        // candidates.set(nextBit, false);
+        // if (candidates.cardinality() == 1) {
+        // break;
+        // }
+        // }
+        // nextBit = candidates.nextSetBit(nextBit + 1);
+        // }
+        // if (candidates.cardinality() == 1) {
+        // break;
+        // }
+        // }
+
+        //return slots + candidates.nextSetBit(0);
+        return slots;
     }
 
     /**

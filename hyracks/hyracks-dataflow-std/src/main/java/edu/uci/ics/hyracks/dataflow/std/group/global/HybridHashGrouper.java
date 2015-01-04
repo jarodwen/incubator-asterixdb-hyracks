@@ -262,11 +262,15 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     public void open() throws HyracksDataException {
 
         // initialize the hash table
+        // - Calculate the number of slots per frame
         int slotsPerFrame = frameSize
                 / ((useMiniBloomFilter ? HT_MINI_BLOOM_FILTER_SIZE : 0) + HT_FRAME_REF_SIZE + HT_TUPLE_REF_SIZE);
+        // - Get the number of frames required to have the expected number of slots in the hash table
         int headerFramesCount = (int) Math.ceil((double) this.tableSize / slotsPerFrame);
 
         if (framesLimit < headerFramesCount + 2) {
+            // At least two more frames are needed beyond the hash table: one for output buffer, and one for hash table
+            // content
             throw new HyracksDataException("Not enough frame (" + framesLimit + ") for a hash table with " + tableSize
                     + " slots.");
         }
@@ -278,6 +282,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         resetHeaders();
 
         if (framesLimit - headers.length - spilledPartitions - 1 <= 0) {
+            // At least one frame per spilled partition is needed
             throw new HyracksDataException("Note enough memory for the hybrid hash algorithm: " + headers.length
                     + " headers and " + spilledPartitions + " partitions.");
         }
@@ -325,6 +330,11 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
         this.outputAppender = new FrameTupleAppender(frameSize);
     }
 
+    /**
+     * Reset the hash table header frames, by setting all bits into 0
+     * 
+     * @throws HyracksDataException
+     */
     private void resetHeaders() throws HyracksDataException {
         for (int i = 0; i < this.headers.length; i++) {
             if (this.headers[i] < 0) {
@@ -344,7 +354,7 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     }
 
     /*
-     * (non-Javadoc)
+     * Process the records frame by frame
      * 
      * @see
      * edu.uci.ics.hyracks.dataflow.std.group.global.base.IPushBasedGrouper#
@@ -451,8 +461,13 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                             || !hashtableFrameTupleAppender.append(groupTupleBuilder.getFieldEndOffsets(),
                                     groupTupleBuilder.getByteArray(), 0, groupTupleBuilder.getSize(), lookupFrameIndex,
                                     lookupTupleIndex)) {
+                        // need to allocate a new frame for hash table: either the frame ID for the hash table (so
+                        // resident)
+                        // partition is not available, or the insertion into the frame of the resident partition is
+                        // failed.
                         int newFrameID = this.frameManager.allocateFrame();
                         while (newFrameID < 0) {
+                            // Cannot allocate more frame: need to spill
                             int partIDToSpill = pickPartitionToSpill();
                             if (partIDToSpill >= 0) {
                                 LOGGER.warning("[HybridHashGrouper] spill partition " + partIDToSpill);
@@ -515,8 +530,12 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
     private double getEstimatedAbsorptionRatio() {
         assert (thresholdTotalGroupsInMem <= thresholdTotalRecordsInMem);
         assert (thresholdTotalGroupsInserted <= thresholdTotalRecordsInserted);
-        return 1 - (((double) thresholdTotalGroupsInMem) / ((double) thresholdTotalRecordsInMem) + ((double) thresholdTotalGroupsInserted)
-                / ((double) thresholdTotalRecordsInserted)) / 2;
+        double upperRatio = ((double) thresholdTotalRecordsInMem) / ((double) thresholdTotalGroupsInMem) - 1;
+        double lowerRatio = ((double) thresholdTotalRecordsInserted) / ((double) thresholdTotalGroupsInserted) - 1;
+        assert (upperRatio >= lowerRatio);
+        LOGGER.warning("[HybridHashGrouper] overall_ratio: " + upperRatio + "\t" + lowerRatio + "\t"
+                + (lowerRatio + (upperRatio - lowerRatio) / 2));
+        return lowerRatio + (upperRatio - lowerRatio) / 2;
     }
 
     /**
@@ -536,6 +555,10 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 pickMin = false;
             case MIN_FIRST:
                 pickMin = true;
+                // The number of buffers for each partition; initialized as MAX_INT if
+                // we want to find the partition with minimum number of buffers, or
+                // as MIN_INT if we want to find the partition with maximum number of
+                // buffers
                 int partBufCount = pickMin ? Integer.MAX_VALUE : Integer.MIN_VALUE;
                 for (int i = 0; i < this.residentPartitions; i++) {
                     if (this.residentPartsSpillFlag[i]) {
@@ -550,16 +573,22 @@ public class HybridHashGrouper extends AbstractHistogramPushBasedGrouper {
                 }
                 break;
             case LOWER_ABSORB_THAN_AVG:
+                double lowestAbsorptionRatioSofar = Double.MAX_VALUE;
                 for (int i = 0; i < this.residentPartitions; i++) {
                     if (this.residentPartsSpillFlag[i]) {
                         continue;
                     }
                     partsInMem++;
-                    double currentAbsorptionRatio = 1 - ((this.groupsInResidentParts[i] == 0) ? 1
-                            : this.recordsInResidentParts[i] / this.groupsInResidentParts[i]);
-                    if (currentAbsorptionRatio > 0 && currentAbsorptionRatio < estimatedAbsorptionRatio) {
-                        partIDToSpill = i;
-                        break;
+                    assert (this.recordsInResidentParts[i] >= this.groupsInResidentParts[i]);
+                    double currentAbsorptionRatio = ((this.groupsInResidentParts[i] == 0) ? 1
+                            : ((double) this.recordsInResidentParts[i]) / this.groupsInResidentParts[i]) - 1;
+                    LOGGER.warning("[HybridHashGrouper] part_ratio: " + i + "\t" + currentAbsorptionRatio);
+                    assert (currentAbsorptionRatio >= 0);
+                    if (currentAbsorptionRatio < estimatedAbsorptionRatio) {
+                        if(currentAbsorptionRatio < lowestAbsorptionRatioSofar){
+                            lowestAbsorptionRatioSofar = currentAbsorptionRatio;
+                            partIDToSpill = i;
+                        }
                     }
                 }
                 break;

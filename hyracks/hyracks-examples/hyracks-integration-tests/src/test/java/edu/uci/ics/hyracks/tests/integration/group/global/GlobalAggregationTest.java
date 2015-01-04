@@ -101,7 +101,7 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
 
     private final boolean pinLastResPart = true;
 
-    private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.MIN_ABSORB_FIRST;
+    private final PartSpillStrategy partSpillStrategy = PartSpillStrategy.LOWER_ABSORB_THAN_AVG;
 
     private final boolean enableResidentPart = false;
 
@@ -113,7 +113,7 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
     private final int groupStateInBytes = 64;
     private final double fudgeFactor = 1.4;
     private final boolean useBloomfilter = true;
-    private final int minFramesPerResidentPart = 2;
+    private final int minFramesPerResidentPart = 1;
 
     private AbstractSingleActivityOperatorDescriptor getPrinter(
             JobSpecification spec,
@@ -122,9 +122,9 @@ public class GlobalAggregationTest extends AbstractIntegrationTest {
         ResultSetId rsId = new ResultSetId(1);
         AbstractSingleActivityOperatorDescriptor printer = new PlainFileWriterOperatorDescriptor(spec,
                 new ConstantFileSplitProvider(new FileSplit[] {
-                        new FileSplit(NC1_ID, new FileReference(new File("/Volumes/Home/hyracks_tmp/201405/" + prefix
+                        new FileSplit(NC1_ID, new FileReference(new File("/Volumes/Garden/hyracks_tmp/201412/" + prefix
                                 + "_nc1.log"))),
-                        new FileSplit(NC2_ID, new FileReference(new File("/Volumes/Home/hyracks_tmp/201405/" + prefix
+                        new FileSplit(NC2_ID, new FileReference(new File("/Volumes/Garden/hyracks_tmp/201412/" + prefix
                                 + "_nc2.log"))) }), "|");
         spec.addResultSetId(rsId);
 
